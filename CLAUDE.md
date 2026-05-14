@@ -67,6 +67,8 @@ npx playwright install webkit
 ## デプロイ・ホスティング
 
 - **Cloudflare Pages**: GitHub 連携でゼロコンフィグ、`xxx.pages.dev` の HTTPS、`base: '/'`、Preview Deployments で Phase ごとに iPhone 実機確認
+  - 本番 (v0.9.0 時点): https://ivc.mymt.casa (カスタムドメイン) / https://iphone-video-compressor.pages.dev (Cloudflare default)
+  - GitHub: https://github.com/kimymt/iphone-video-compressor
 - 必要なら `public/_headers` に COOP/COEP を設定（mediabunny が SharedArrayBuffer を使う場合のみ）:
   ```
   /*
