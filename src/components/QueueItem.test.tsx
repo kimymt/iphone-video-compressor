@@ -1,8 +1,21 @@
 // Phase 4b: QueueItem の 6 ステータス UI / 副次テキスト / アクションボタンを検証。
 // queueStore の cancel / remove メソッドは vi.spyOn で監視するだけで実体は走らせない。
+// Phase 5 で Share ボタンの表示テストも追加。ShareButton 内部の OPFS / Share 動作は
+// ShareButton.test.tsx で別途検証。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+
+// QueueItem は ShareButton を内部 import するが、ShareButton は ../db/opfs と
+// ../platform/share に依存する。QueueItem テストでは Share ボタンを click しないので
+// stub だけ用意して副作用が走らないようにしておく。
+vi.mock('../db/opfs', () => ({
+  readFromOpfs: vi.fn(),
+}));
+vi.mock('../platform/share', () => ({
+  shareFile: vi.fn(),
+}));
+
 import QueueItemRow from './QueueItem';
 import { useQueueStore } from '../stores/queueStore';
 import type { QueueItem } from '../lib/types';
@@ -78,7 +91,7 @@ describe('QueueItem — レンダリング (6 ステータス)', () => {
     expect(screen.queryByText(/残り/)).toBeNull();
   });
 
-  it('done: CheckCircle2 + 圧縮率 + Remove (cancel 非表示)', () => {
+  it('done: CheckCircle2 + 圧縮率 + Share + Remove (cancel 非表示)', () => {
     render(
       <QueueItemRow
         item={makeItem('done', {
@@ -93,7 +106,9 @@ describe('QueueItem — レンダリング (6 ステータス)', () => {
     // 10 MB → 2 MB = 20%
     expect(screen.getByText(/10\.0 MB → 2\.0 MB \(20%\)/)).toBeInTheDocument();
     expect(screen.getByLabelText(/削除/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/共有/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/処理を中止/)).toBeNull();
+    expect(screen.queryByLabelText(/再試行/)).toBeNull();
   });
 
   it('failed: AlertTriangle + エラーメッセージ + Retry + Remove', () => {
@@ -176,6 +191,53 @@ describe('QueueItem — アクション', () => {
     u2();
     render(<QueueItemRow item={makeItem('processing', { progress: 30 })} />);
     expect(screen.queryByLabelText(/再試行/)).toBeNull();
+  });
+});
+
+describe('QueueItem — Share ボタン (Phase 5)', () => {
+  it('done で outputOpfsPath があれば Share ボタンを表示', () => {
+    render(
+      <QueueItemRow
+        item={makeItem('done', {
+          progress: 100,
+          inputOpfsPath: '',
+          outputOpfsPath: 'outputs/item-1.mp4',
+          outputSize: 100,
+        })}
+      />,
+    );
+    expect(screen.getByTestId('share-button')).toBeInTheDocument();
+    expect(screen.getByLabelText('IMG_4523.mov を共有')).toBeInTheDocument();
+  });
+
+  it('done でも outputOpfsPath が未定義のときは Share ボタンを表示しない', () => {
+    // 防御的: 通常 done 遷移時に outputOpfsPath は必ずセットされるが、不整合時の挙動を確認
+    render(
+      <QueueItemRow
+        item={makeItem('done', {
+          progress: 100,
+          inputOpfsPath: '',
+          outputOpfsPath: undefined,
+          outputSize: 100,
+        })}
+      />,
+    );
+    expect(screen.queryByTestId('share-button')).toBeNull();
+  });
+
+  it('queued / starting / processing / failed / cancelled では Share ボタンは表示しない', () => {
+    const statuses: Array<{ s: QueueItem['status']; ov?: Partial<QueueItem> }> = [
+      { s: 'queued' },
+      { s: 'starting' },
+      { s: 'processing', ov: { progress: 50 } },
+      { s: 'failed', ov: { error: 'x' } },
+      { s: 'cancelled' },
+    ];
+    for (const { s, ov } of statuses) {
+      const { unmount } = render(<QueueItemRow item={makeItem(s, ov)} />);
+      expect(screen.queryByTestId('share-button')).toBeNull();
+      unmount();
+    }
   });
 });
 

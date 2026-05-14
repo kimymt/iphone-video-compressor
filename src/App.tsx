@@ -5,11 +5,13 @@ import QueueList from './components/QueueList';
 import { verifyEnvironment } from './platform/capability';
 import { ensurePersistent } from './platform/storage';
 import { useQueueStore, type AddResult } from './stores/queueStore';
+import { installSideEffects } from './stores/sideEffects';
 import { formatBytes } from './lib/format';
 import type { EnvCheck } from './lib/types';
 
 // Phase 4b: 6 ステータス対応の QueueItem + QueueList に統合。
-// SettingsSheet (歯車) は Phase 6、共有 / リトライは Phase 5 / 4c。
+// Phase 4c: retry + clearCompleted、Phase 5: ShareButton + WakeLock + 完了サウンド。
+// SettingsSheet (歯車) は Phase 6。
 
 function ToastError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   useEffect(() => {
@@ -74,6 +76,16 @@ export default function App() {
       });
     }
   }, [envCheck?.canRun, initialized, init]);
+
+  // Phase 5: WakeLock + 完了サウンドの side effect を install。
+  // initialized 後に 1 度だけ。queueStore の状態遷移を subscribe する。
+  useEffect(() => {
+    if (!initialized) return;
+    const unsubscribe = installSideEffects();
+    return () => {
+      unsubscribe();
+    };
+  }, [initialized]);
 
   // dev mode (?dev=1) で E2E から store にアクセスできるよう window に露出。
   // __movieCompresserStore: 現在の state スナップショット (items / actions)。items 変更で再代入。

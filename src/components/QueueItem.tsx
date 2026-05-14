@@ -1,13 +1,13 @@
 // Phase 4b: 1 アイテム分の UI。6 ステータスに応じてアイコン / 進捗バー / アクションを切り替える。
 // Phase 4c: failed/cancelled に Retry ボタンを追加 (input が残っていれば有効)。
+// Phase 5: done に Share ボタンを追加 (outputOpfsPath を共有 / ダウンロード)。
 // CLAUDE.md「インタラクションステートカバレッジ」表に対応。
 //
-// Share ボタンは Phase 5 で追加する。
 // 本ファイルが提供するのは:
 // - queued: Clock + テキスト + Cancel + Remove
 // - starting: Loader (spin) + テキスト + Cancel
 // - processing: ProgressBar + percent + ETA + Cancel
-// - done: CheckCircle2 (success) + 圧縮率 + Remove
+// - done: CheckCircle2 (success) + 圧縮率 + Share + Remove
 // - failed: AlertTriangle (error) + エラーメッセージ + Retry + Remove
 // - cancelled: XCircle (secondary) + テキスト + Retry + Remove
 
@@ -24,6 +24,7 @@ import {
 import { useQueueStore } from '../stores/queueStore';
 import { formatBytes, formatDuration } from '../lib/format';
 import type { QueueItem } from '../lib/types';
+import ShareButton from './ShareButton';
 
 export interface QueueItemProps {
   item: QueueItem;
@@ -107,6 +108,8 @@ export default function QueueItemRow({ item }: QueueItemProps) {
   const showRetryBtn = item.status === 'failed' || item.status === 'cancelled';
   // 防御: 不整合状態 (failed なのに input が空) では disable で残す
   const retryDisabled = !item.inputOpfsPath;
+  // Share は done かつ outputOpfsPath があるときのみ。
+  const showShareBtn = item.status === 'done' && !!item.outputOpfsPath;
   const showRemoveBtn = !showCancelBtn || item.status === 'queued';
   // queued は cancel と remove 両方表示。queued の cancel は items に残す (cancelled に遷移)、
   // remove は削除。
@@ -157,6 +160,9 @@ export default function QueueItemRow({ item }: QueueItemProps) {
             >
               <RefreshCw aria-hidden="true" size={18} />
             </button>
+          )}
+          {showShareBtn && item.outputOpfsPath && (
+            <ShareButton outputOpfsPath={item.outputOpfsPath} fileName={item.fileName} />
           )}
           {showRemoveBtn && (
             <button
