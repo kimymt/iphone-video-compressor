@@ -147,8 +147,8 @@ describe('FilePicker', () => {
   });
 
   it('Phase 7 post-v0.9.0: onChange で wakeLockManager.acquire が await の前に呼ばれる', async () => {
-    // FilePicker.handleChange は eager acquire を行う (user gesture を温存するため)。
-    // OPFS の await を挟む前に呼ばれることを spy で検証。
+    // FilePicker.handleChange は defensive acquire を行う (handleClick 経由で既に
+    // acquire 済みでも no-op になる前提)。OPFS の await を挟む前に呼ばれることを検証。
     const acquireSpy = vi
       .spyOn(wakeLockManager, 'acquire')
       .mockResolvedValue(undefined);
@@ -165,5 +165,74 @@ describe('FilePicker', () => {
     await waitFor(() => {
       expect(useQueueStore.getState().items).toHaveLength(1);
     });
+  });
+
+  it('Phase 7 post-v0.9.1: ボタンタップ (click event) で wakeLockManager.acquire が先に呼ばれる', async () => {
+    // iOS Safari の `change` イベントは transient user activation を持たないため
+    // (実機で NotAllowedError を観測)、`click` イベントの user activation を使う。
+    // handleClick の先頭 (await unlockAudio の前) で acquire が同期実行されることを検証。
+    const acquireSpy = vi
+      .spyOn(wakeLockManager, 'acquire')
+      .mockResolvedValue(undefined);
+
+    render(<FilePicker preset="standard-hevc" />);
+    fireEvent.click(screen.getByRole('button', { name: '動画を選択' }));
+
+    // handleClick は async だが先頭の void wakeLockManager.acquire() は同期で発火
+    expect(acquireSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('Phase 7 post-v0.9.1: 60s 経過後に release が呼ばれる (キャンセル検出)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const releaseSpy = vi
+      .spyOn(wakeLockManager, 'release')
+      .mockResolvedValue(undefined);
+    vi.spyOn(wakeLockManager, 'acquire').mockResolvedValue(undefined);
+
+    try {
+      render(<FilePicker preset="standard-hevc" />);
+      fireEvent.click(screen.getByRole('button', { name: '動画を選択' }));
+      expect(releaseSpy).not.toHaveBeenCalled();
+      // 60 秒以内 (59 秒) では release されない
+      vi.advanceTimersByTime(59_999);
+      expect(releaseSpy).not.toHaveBeenCalled();
+      // 60 秒で release
+      vi.advanceTimersByTime(1);
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Phase 7 post-v0.9.1: 60s 内に change が来ればキャンセル検出は走らない', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const releaseSpy = vi
+      .spyOn(wakeLockManager, 'release')
+      .mockResolvedValue(undefined);
+    vi.spyOn(wakeLockManager, 'acquire').mockResolvedValue(undefined);
+
+    try {
+      render(<FilePicker preset="standard-hevc" />);
+      fireEvent.click(screen.getByRole('button', { name: '動画を選択' }));
+      // 30 秒経過後に change イベント (file 選択完了) を発火 → タイマー停止
+      vi.advanceTimersByTime(30_000);
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [new File(['x'], 'a.mov')] } });
+      // さらに 60 秒経っても release は呼ばれない
+      vi.advanceTimersByTime(60_000);
+      expect(releaseSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Phase 7 post-v0.9.1: change with 0 files (まれ) でも release で leak 防止', async () => {
+    const releaseSpy = vi
+      .spyOn(wakeLockManager, 'release')
+      .mockResolvedValue(undefined);
+    render(<FilePicker preset="standard-hevc" />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [] } });
+    await waitFor(() => expect(releaseSpy).toHaveBeenCalled());
   });
 });
