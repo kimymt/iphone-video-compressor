@@ -4,7 +4,16 @@ import { indexedDB } from 'fake-indexeddb';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FilePicker, { _resetAudioUnlockForTest } from './FilePicker';
-import { useQueueStore, _resetQueueStoreForTest } from '../stores/queueStore';
+import {
+  useQueueStore,
+  _resetQueueStoreForTest,
+  _setWorkerImplsForTest,
+  _resetWorkerImplsForTest,
+} from '../stores/queueStore';
+import type {
+  TranscodeJobOptions,
+  TranscodeJobResult,
+} from '../workers/compressor-client';
 import { _resetDbCacheForTest } from '../db/indexeddb';
 import { installMockOpfs, resetMockOpfs } from '../../tests/helpers/mock-opfs';
 
@@ -31,6 +40,19 @@ async function resetAll(opts: { quotaBytes?: number } = {}) {
   });
   _resetQueueStoreForTest();
   _resetAudioUnlockForTest();
+  // Worker spawn を noop に差し替え (JSDOM に Worker 無し、テストは UI のみ検証)
+  _setWorkerImplsForTest(
+    () =>
+      ({
+        terminate: () => {},
+        postMessage: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => true,
+      }) as unknown as Worker,
+    // ジョブは resolve しない (queued/starting で固定、テストの assertion 通過後にリーク)
+    (_w: Worker, _o: TranscodeJobOptions) => new Promise<TranscodeJobResult>(() => {}),
+  );
 }
 
 describe('FilePicker', () => {
@@ -42,6 +64,7 @@ describe('FilePicker', () => {
   afterEach(() => {
     cleanup();
     resetMockOpfs();
+    _resetWorkerImplsForTest();
     vi.unstubAllGlobals();
   });
 
