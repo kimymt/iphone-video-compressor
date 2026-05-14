@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { useQueueStore, type AddResult } from '../stores/queueStore';
 import { unlockAudio } from '../platform/audio';
@@ -9,11 +9,16 @@ import type { PresetKey } from '../lib/types';
 // ボタンタップは user gesture → 共有 AudioContext を resume して以降の playDoneSound が
 // 同じ ctx で鳴るようにする (CLAUDE.md ハマりどころ 25 + v0.9.0 実機検証で再発見)。
 //
-// Wake Lock の eager acquire (v0.9.0 post-release):
-// onChange (= 写真選択完了) は user gesture コンテキストで発火するため、
-// OPFS 書き込みの await を挟む前に同期で wakeLockManager.acquire() を始める。
-// add() 内の await により transient activation が失効するため、sideEffects 経由の
-// 後発 acquire は iOS Safari で NotAllowedError になることが多い。
+// Wake Lock の eager acquire (v0.9.0 実機 → NotAllowedError を観測した後の対応):
+// click ハンドラの先頭 (await の前) で wakeLockManager.acquire() を呼ぶ。
+// iOS Safari は `change` イベントで transient user activation を持たない (もしくは
+// その前の await で消費される) ため、`change` 経由の acquire は NotAllowedError になる。
+// `click` イベントは確実に user activation を持つので、ここで request を発火する。
+//
+// キャンセル検出: file picker をキャンセルした場合、change イベントは発火しないので
+// Wake Lock が leak する。60 秒タイムアウトで isProcessing=false なら release する。
+
+const CANCEL_DETECT_MS = 60_000;
 
 type Props = {
   preset: PresetKey;
@@ -23,25 +28,62 @@ type Props = {
 
 export default function FilePicker({ preset, onResult, disabled = false }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cancelTimerRef = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const add = useQueueStore((s) => s.add);
 
+  const clearCancelTimer = (): void => {
+    if (cancelTimerRef.current !== null) {
+      clearTimeout(cancelTimerRef.current);
+      cancelTimerRef.current = null;
+    }
+  };
+
+  // unmount 時はタイマーをクリーンアップ
+  useEffect(() => clearCancelTimer, []);
+
+  const scheduleCancelDetect = (): void => {
+    clearCancelTimer();
+    cancelTimerRef.current = window.setTimeout(() => {
+      cancelTimerRef.current = null;
+      // 処理開始してなければユーザが file picker をキャンセルしたとみなして release
+      if (!useQueueStore.getState().isProcessing) {
+        void wakeLockManager.release();
+      }
+    }, CANCEL_DETECT_MS);
+  };
+
   const handleClick = async (): Promise<void> => {
     if (busy || disabled) return;
-    // user gesture を逃さないよう同期的に呼ぶ。失敗してもピッカーは開く。
+
+    // click event の user activation を即座に Wake Lock の request に渡す。
+    // navigator.wakeLock.request('screen') は wakeLockManager.acquire() の中で
+    // 同期的に call され、await はその Promise の解決待ち。
+    // await unlockAudio() より前に呼ぶことで activation 消費の影響を受けない。
+    void wakeLockManager.acquire();
+    scheduleCancelDetect();
+
     await unlockAudio();
     inputRef.current?.click();
   };
 
   const handleChange = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    // change が発火 = キャンセルではない → タイマー停止
+    clearCancelTimer();
+
     const files = Array.from(e.target.files ?? []);
     // input を即リセット (同じファイルを連続選択できるように)
     e.target.value = '';
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      // iOS Safari は通常キャンセル時 change を発火しないが、defensive に release
+      if (!useQueueStore.getState().isProcessing) {
+        void wakeLockManager.release();
+      }
+      return;
+    }
 
-    // user gesture コンテキストで Wake Lock を先取り。await は挟まない。
-    // sideEffects は isProcessing 遷移でも再度 acquire を呼ぶが、wakeLockManager 側で
-    // 既取得なら no-op となるので二重呼び出しは無害。
+    // 念のため再度 acquire (既取得なら WakeLockManager 側で no-op)。
+    // click でうまくいっていればここでの request は実行されない。
     void wakeLockManager.acquire();
 
     setBusy(true);
