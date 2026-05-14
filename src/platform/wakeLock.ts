@@ -25,12 +25,15 @@ export interface WakeLockOptions {
   doc?: Document | null;
 }
 
+export type WakeLockChangeListener = (active: boolean) => void;
+
 export class WakeLockManager {
   private lock: WakeLockSentinelLike | null = null;
   private wantAcquired = false;
   private visibilityHandler: (() => void) | null = null;
   private wakeLockApi: WakeLockApiLike | null;
   private doc: Document | null;
+  private listeners = new Set<WakeLockChangeListener>();
 
   constructor(opts: WakeLockOptions = {}) {
     this.wakeLockApi =
@@ -38,6 +41,33 @@ export class WakeLockManager {
         ? opts.wakeLockApi
         : readDefaultWakeLock();
     this.doc = opts.doc !== undefined ? opts.doc : readDefaultDocument();
+  }
+
+  /**
+   * lock 状態変化を購読する。
+   * - acquire 成功時 (lock セット直後): listener(true)
+   * - システム解除 (visibility=hidden 等): listener(false)
+   * - visibility=visible での再取得成功: listener(true)
+   * - 明示的 release(): listener(false)
+   * 戻り値は unsubscribe 関数。
+   * 購読時点の状態を即座に通知することはしない (React 側で `useState(() => isActive())` で初期化する)。
+   */
+  onChange(listener: WakeLockChangeListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notify(): void {
+    const active = this.isActive();
+    for (const l of this.listeners) {
+      try {
+        l(active);
+      } catch {
+        /* listener 側の例外は無視 */
+      }
+    }
   }
 
   /**
@@ -59,6 +89,7 @@ export class WakeLockManager {
   async release(): Promise<void> {
     this.wantAcquired = false;
     this.removeVisibilityHandler();
+    const hadLock = this.lock !== null;
     const lock = this.lock;
     this.lock = null;
     if (lock && !lock.released) {
@@ -68,6 +99,7 @@ export class WakeLockManager {
         /* 既に解放済み等は無視 */
       }
     }
+    if (hadLock) this.notify();
   }
 
   /** 現在 wake lock を保持しているか (released=true は false 扱い)。 */
@@ -103,10 +135,13 @@ export class WakeLockManager {
     }
 
     this.lock = lock;
+    this.notify();
     lock.addEventListener('release', () => {
       // システム (例えば iOS の visibility=hidden) が解放した
-      if (this.lock === lock) this.lock = null;
+      const wasOurLock = this.lock === lock;
+      if (wasOurLock) this.lock = null;
       // wantAcquired のままなら visibilitychange が再取得を試みる
+      if (wasOurLock) this.notify();
     });
   }
 

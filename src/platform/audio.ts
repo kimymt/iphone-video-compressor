@@ -1,18 +1,38 @@
-// Phase 5: 完了チャイム生成。
+// Phase 5 + Phase 7 polish: audio unlock と完了チャイム。
 // CLAUDE.md「主要モジュール仕様」では done.m4a を `<audio>` 経由で再生する想定だが、
 // バイナリ素材を持たないで済むよう WebAudio API で軽い 2 音チャイムを合成する。
-// FilePicker タップ時の audio unlock (Phase 2) で AudioContext が unlock 済みの前提。
 //
-// iOS は新規 AudioContext の作成にもユーザージェスチャーを要求する場合があるため、
-// 失敗時は静かに諦める (例外は握り潰す)。
+// iOS Safari の制約:
+// 1. AudioContext は最初のユーザージェスチャー (タップ等) で resume されるまでサスペンド
+// 2. unlock は AudioContext インスタンス単位。新規 ctx を作ると再度 unlock が必要
+// 3. iPhone のサイレントスイッチ ON では WebAudio も無音になる (アプリ側で override 不可)
+//
+// 対策: モジュールスコープで AudioContext を 1 個だけ持つ (`sharedCtx`)。
+// FilePicker タップ時の `unlockAudio()` が初期化 + resume + 無音サンプル再生。
+// 完了時の `playDoneSound()` は同じ ctx に oscillator を繋いで鳴らす。
+// 別々のインスタンスを作っていた v0.9.0 では実機で鳴らないケースが報告された。
 
 type AudioContextCtor = new () => AudioContext;
 
 let audioCtorOverride: AudioContextCtor | null = null;
+let sharedCtx: AudioContext | null = null;
 
-/** テスト用: AudioContext コンストラクタを差し替える。null でリセット。 */
+/** テスト用: AudioContext コンストラクタを差し替える。null でリセット + 共有 ctx も破棄。 */
 export function _setAudioContextCtorForTest(ctor: AudioContextCtor | null): void {
   audioCtorOverride = ctor;
+  sharedCtx = null;
+}
+
+/** テスト用: 共有 AudioContext だけリセット (コンストラクタは残す)。 */
+export function _resetSharedAudioCtxForTest(): void {
+  if (sharedCtx) {
+    try {
+      void sharedCtx.close();
+    } catch {
+      /* noop */
+    }
+  }
+  sharedCtx = null;
 }
 
 function getAudioContextCtor(): AudioContextCtor | null {
@@ -26,41 +46,61 @@ function getAudioContextCtor(): AudioContextCtor | null {
 }
 
 /**
- * 完了時に呼ぶ。AudioContext が無い / 拒否された場合は無音で no-op。
- * 700ms 後に AudioContext を close してリソースを解放する。
+ * 共有 AudioContext を取得 (初回呼び出しで生成)。生成自体は user gesture 不要だが、
+ * `state === 'suspended'` のまま帰ることがある。呼び出し側で `resume()` する。
  */
-export async function playDoneSound(): Promise<void> {
+function getOrCreateSharedCtx(): AudioContext | null {
+  if (sharedCtx) return sharedCtx;
   const Ctx = getAudioContextCtor();
-  if (!Ctx) return;
-
-  let ctx: AudioContext;
+  if (!Ctx) return null;
   try {
-    ctx = new Ctx();
+    sharedCtx = new Ctx();
   } catch {
-    return;
+    sharedCtx = null;
   }
+  return sharedCtx;
+}
 
+/**
+ * iOS Safari の audio unlock。FilePicker タップ等のユーザージェスチャーから呼ぶ。
+ * 共有 AudioContext を生成 + resume + 1 サンプルの無音 BufferSource を再生して
+ * 「サウンドアウトプット」をアクティブ化する。以降の `playDoneSound` は同じ ctx を使う。
+ *
+ * 失敗 (gesture 外 / 拒否 / Ctx 無し) は静かに諦める。
+ */
+export async function unlockAudio(): Promise<void> {
+  const ctx = getOrCreateSharedCtx();
+  if (!ctx) return;
   try {
     if (ctx.state === 'suspended') {
       await ctx.resume();
     }
-    playChime(ctx);
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
   } catch {
-    await closeQuiet(ctx);
-    return;
+    /* unlock 失敗は致命的でない。playDoneSound でも再度 resume 試行する。 */
   }
-
-  // 鳴り切ったあとに AudioContext を close (700ms = チャイム長 450ms + 余裕)
-  setTimeout(() => {
-    void closeQuiet(ctx);
-  }, 700);
 }
 
-async function closeQuiet(ctx: AudioContext): Promise<void> {
+/**
+ * 完了チャイムを再生する。共有 AudioContext を使い、suspended なら resume を試みる。
+ * iPhone サイレントスイッチ ON では (resume 成功しても) 出力が無音になる。
+ * 失敗時は無音で no-op。
+ */
+export async function playDoneSound(): Promise<void> {
+  const ctx = getOrCreateSharedCtx();
+  if (!ctx) return;
   try {
-    await ctx.close();
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+    if (ctx.state !== 'running') return; // gesture 外で resume 失敗 (返り値だけ running)
+    playChime(ctx);
   } catch {
-    /* noop */
+    /* チャイム失敗は致命的でない (リソース解放はアプリ teardown でまとめて行う) */
   }
 }
 
