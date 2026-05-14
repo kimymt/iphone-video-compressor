@@ -6,5 +6,11 @@ export default defineConfig({
   base: '/',
   plugins: [react()],
   worker: { format: 'es' },
-  server: { port: 5173, host: true },
+  server: {
+    port: 5173,
+    host: true,
+    // Cloudflare Tunnel (cloudflared --url http://localhost:5173) で iPhone 実機確認するため。
+    // Vite 5.4.12+ のセキュリティ強化で外部ホストはホワイトリスト化が必要。
+    allowedHosts: ['.trycloudflare.com'],
+  },
 });
