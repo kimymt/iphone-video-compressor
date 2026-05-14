@@ -1,0 +1,83 @@
+/* デザインシステム — CLAUDE.md の「デザインシステム」セクション参照 */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Typography */
+  --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-text: 'SF Pro Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'SF Compact', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Dark mode (デフォルト) */
+  --bg: #0a0a0a;
+  --surface: #1c1c1e;
+  --surface-elevated: #2c2c2e;
+  --label: #ffffff;
+  --label-secondary: rgba(235, 235, 245, 0.6);
+  --label-tertiary: rgba(235, 235, 245, 0.3);
+  --accent: #0a84ff;
+  --success: #30d158;
+  --error: #ff3b30;
+  --warning: #ff9f0a;
+  --separator: rgba(84, 84, 88, 0.65);
+  --glass-tint: rgba(28, 28, 30, 0.7);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f2f2f7;
+    --surface: #ffffff;
+    --surface-elevated: #ffffff;
+    --label: #000000;
+    --label-secondary: rgba(60, 60, 67, 0.6);
+    --label-tertiary: rgba(60, 60, 67, 0.3);
+    --accent: #007aff;
+    --success: #34c759;
+    --error: #ff3b30;
+    --warning: #ff9500;
+    --separator: rgba(60, 60, 67, 0.36);
+    --glass-tint: rgba(255, 255, 255, 0.7);
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--label);
+  font-family: var(--font-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.app {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.title {
+  font-family: var(--font-display);
+}
+
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.glass-panel {
+  background: var(--glass-tint);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
