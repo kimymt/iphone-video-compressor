@@ -62,6 +62,14 @@ export type QueueStoreActions = {
   add: (files: File[], preset: PresetKey) => Promise<AddResult>;
   remove: (id: string) => Promise<void>;
   /**
+   * 実行中のジョブを cancel する。
+   * - queued: 直接 cancelled に遷移 (Worker 未起動)
+   * - starting/processing: abortController.abort()、Worker からの cancelled 応答で
+   *   runJob が status='cancelled' に遷移
+   * - 既に terminal (done/failed/cancelled): no-op
+   */
+  cancel: (id: string) => Promise<void>;
+  /**
    * 'queued' なアイテムを並列度の上限まで起動する。
    * add() / init() / 各ジョブ完了時に自動呼び出し。手動でも呼べる (idempotent)。
    */
@@ -212,6 +220,27 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
   },
 
+  async cancel(id) {
+    const item = get().items.find((i) => i.id === id);
+    if (!item) return;
+    if (item.status === 'queued') {
+      // Worker 未起動、直接 cancelled に遷移
+      await transition(set, get, id, {
+        status: 'cancelled',
+        finishedAt: Date.now(),
+        etaSec: undefined,
+        currentSec: undefined,
+      });
+      return;
+    }
+    if (item.status === 'starting' || item.status === 'processing') {
+      // 実行中: abort を発火、Worker からの cancelled 応答で runJob が遷移を行う
+      abortRunningJob(id);
+      return;
+    }
+    // done / failed / cancelled は no-op
+  },
+
   processNext() {
     const state = get();
     const running = state.items.filter(
@@ -286,8 +315,14 @@ async function runJob(
         // starting → processing に切り替えて UI に進捗バーを表示開始させる
         void transition(set, get, item.id, { status: 'processing' });
       },
-      onProgress: (percent) => {
-        void transition(set, get, item.id, { progress: percent });
+      onProgress: (percent, currentSec, totalSec, etaSec) => {
+        void transition(set, get, item.id, {
+          progress: percent,
+          currentSec,
+          etaSec,
+          // totalSec は item.durationSec として使う (Worker からの確定値)
+          durationSec: totalSec,
+        });
       },
       signal: abortController.signal,
     });
@@ -304,6 +339,9 @@ async function runJob(
         progress: 100,
         // input 削除済みの目印 (UI 側で retry をグレーアウトする判定に使う)
         inputOpfsPath: '',
+        // terminal で ephemeral フィールドをクリア
+        etaSec: undefined,
+        currentSec: undefined,
       });
     } else if (result.kind === 'cancelled') {
       // 中途出力を削除
@@ -311,6 +349,8 @@ async function runJob(
       await transition(set, get, item.id, {
         status: 'cancelled',
         finishedAt: Date.now(),
+        etaSec: undefined,
+        currentSec: undefined,
       });
     } else {
       // failed

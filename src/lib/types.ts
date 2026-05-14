@@ -38,6 +38,10 @@ type QueueItemBase = {
   addedAt: number;
   startedAt?: number;
   finishedAt?: number;
+  /** processing 中のみセット。Worker の onProgress 由来。terminal で undefined。 */
+  etaSec?: number | null;
+  /** processing 中の処理済み秒。UI で残り時間表示に使う。terminal で undefined。 */
+  currentSec?: number;
 };
 
 export type QueueStatus =

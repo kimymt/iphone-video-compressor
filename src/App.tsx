@@ -1,26 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Trash2, Video } from 'lucide-react';
 import UnsupportedScreen from './components/UnsupportedScreen';
 import FilePicker from './components/FilePicker';
+import QueueList from './components/QueueList';
 import { verifyEnvironment } from './platform/capability';
 import { ensurePersistent } from './platform/storage';
 import { useQueueStore, type AddResult } from './stores/queueStore';
 import { formatBytes } from './lib/format';
-import type { EnvCheck, QueueItem } from './lib/types';
+import type { EnvCheck } from './lib/types';
 
-// Phase 2: capability check → init() → 最小キュー UI (TitleBar + QueueList + FilePicker)。
-// Phase 4 で QueueItem の UI を 6 ステータス対応に、Phase 6 で SettingsSheet を追加。
-
-function statusLabel(status: QueueItem['status']): string {
-  switch (status) {
-    case 'queued': return 'キュー待ち';
-    case 'starting': return '開始中…';
-    case 'processing': return '処理中';
-    case 'done': return '完了';
-    case 'failed': return 'エラー';
-    case 'cancelled': return 'キャンセル済み';
-  }
-}
+// Phase 4b: 6 ステータス対応の QueueItem + QueueList に統合。
+// SettingsSheet (歯車) は Phase 6、共有 / リトライは Phase 5 / 4c。
 
 function ToastError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   useEffect(() => {
@@ -44,7 +33,6 @@ export default function App() {
 
   const items = useQueueStore((s) => s.items);
   const init = useQueueStore((s) => s.init);
-  const remove = useQueueStore((s) => s.remove);
   const initialized = useQueueStore((s) => s.initialized);
 
   // 起動時 capability check
@@ -88,7 +76,6 @@ export default function App() {
   }, [envCheck?.canRun, initialized, init]);
 
   // dev mode (?dev=1) で E2E から store にアクセスできるよう window に露出。
-  // 本番では実行されない (capability.ts の dev override と同じガード)。
   useEffect(() => {
     if (!initialized) return;
     if (typeof window === 'undefined') return;
@@ -130,45 +117,9 @@ export default function App() {
         <h1 className="title text-3xl font-bold">動画圧縮</h1>
       </header>
 
-      <ul
-        role="list"
-        aria-label="圧縮キュー"
-        className="flex-1 overflow-y-auto px-4"
-        data-testid="queue-list"
-      >
-        {items.length === 0 ? (
-          <li className="flex flex-col items-center gap-3 py-16 text-center text-[var(--label-secondary)]">
-            <Video size={48} aria-hidden="true" />
-            <p className="font-semibold text-[var(--label)]">まだ何もありません</p>
-            <p className="text-sm">下の「動画を選択」から始められます</p>
-          </li>
-        ) : (
-          items.map((item) => (
-            <li
-              key={item.id}
-              role="listitem"
-              aria-label={`${item.fileName}、${statusLabel(item.status)}、進捗 ${item.progress}%`}
-              className="flex items-center justify-between border-b border-[var(--separator)] py-3"
-              data-testid="queue-item"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{item.fileName}</p>
-                <p className="tabular text-xs text-[var(--label-secondary)]">
-                  {formatBytes(item.inputSize)} · {statusLabel(item.status)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => remove(item.id)}
-                className="ml-3 flex h-11 w-11 items-center justify-center rounded-full text-[var(--label-secondary)] hover:bg-[var(--surface)]"
-                aria-label={`${item.fileName} を削除`}
-              >
-                <Trash2 size={18} aria-hidden="true" />
-              </button>
-            </li>
-          ))
-        )}
-      </ul>
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <QueueList items={items} />
+      </div>
 
       <FilePicker preset="standard-hevc" onResult={handleAddResult} />
     </main>

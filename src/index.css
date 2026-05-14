@@ -74,6 +74,18 @@ body,
   -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
+/* Phase 4b: QueueItem done 遷移時の CheckCircle2 アニメ */
+@keyframes scale-in {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001ms !important;
