@@ -1,15 +1,26 @@
 import { test, expect } from '@playwright/test';
 
-// Phase 1 以降: capability check を経て分岐する。
-// Playwright WebKit (26.x) は WebCodecs の audio classes が無いことがあるため、
-// 確実に Hello を出すには ?dev=1 を使う。
+// Phase 0-2 smoke E2E: dev override で起動し、タイトル + empty state が見えることを確認。
 
-test('?dev=1 で Hello が表示される', async ({ page }) => {
+test('?dev=1 でタイトル「動画圧縮」 + empty state が表示される', async ({ page }) => {
   await page.goto('/?dev=1');
-  await expect(page.getByRole('heading', { name: /Hello/ })).toBeVisible();
+  // OPFS と IndexedDB を空にしてから再評価
+  await page.evaluate(async () => {
+    try {
+      const root = await navigator.storage.getDirectory();
+      for await (const [name] of root as unknown as AsyncIterable<[string, FileSystemHandle]>) {
+        await root.removeEntry(name, { recursive: true } as FileSystemRemoveOptions);
+      }
+    } catch {}
+    indexedDB.deleteDatabase('movie-compresser');
+  });
+  await page.reload();
+
+  await expect(page.getByRole('heading', { name: '動画圧縮', level: 1 })).toBeVisible();
+  await expect(page.getByText('まだ何もありません')).toBeVisible({ timeout: 5_000 });
 });
 
-test('日本語タイトルが設定されている', async ({ page }) => {
+test('日本語タイトル (document.title) が設定されている', async ({ page }) => {
   await page.goto('/?dev=1');
   await expect(page).toHaveTitle('動画圧縮');
 });
