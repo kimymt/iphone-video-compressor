@@ -137,4 +137,44 @@ describe('WakeLockIndicator', () => {
     expect(ind).toHaveAttribute('aria-live', 'polite');
     expect(ind.getAttribute('aria-label')).toMatch(/画面|Wake Lock/);
   });
+
+  it('acquire 失敗時はエラー名がインラインで表示される (Phase 7 post-v0.9.0)', async () => {
+    const api = new StubApi();
+    api.shouldReject = true;
+    const mgr = new WakeLockManager({ wakeLockApi: api });
+    // request を `NotAllowedError` 系で reject させる
+    api.request = async () => {
+      throw Object.assign(new Error('No user gesture'), { name: 'NotAllowedError' });
+    };
+    render(<WakeLockIndicator manager={mgr} />);
+    act(() => {
+      useQueueStore.setState({ isProcessing: true });
+    });
+    await act(async () => {
+      await mgr.acquire();
+    });
+    const ind = screen.getByTestId('wake-lock-indicator');
+    expect(ind).toHaveAttribute('data-state', 'inactive');
+    expect(ind).toHaveAttribute('data-error-name', 'NotAllowedError');
+    expect(ind).toHaveTextContent(/画面 ON 失敗: NotAllowedError/);
+    expect(ind).toHaveAttribute(
+      'title',
+      expect.stringContaining('NotAllowedError'),
+    );
+    expect(ind.getAttribute('aria-label')).toMatch(/NotAllowedError/);
+  });
+
+  it('wakeLockApi が null (NotSupported) でも診断表示される', async () => {
+    const mgr = new WakeLockManager({ wakeLockApi: null });
+    render(<WakeLockIndicator manager={mgr} />);
+    act(() => {
+      useQueueStore.setState({ isProcessing: true });
+    });
+    await act(async () => {
+      await mgr.acquire();
+    });
+    const ind = screen.getByTestId('wake-lock-indicator');
+    expect(ind).toHaveAttribute('data-error-name', 'NotSupported');
+    expect(ind).toHaveTextContent(/画面 ON 失敗: NotSupported/);
+  });
 });

@@ -229,13 +229,15 @@ describe('WakeLockManager', () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
-    it('acquire が失敗 (request reject) しても listener は呼ばれない', async () => {
+    it('acquire 失敗時も listener が呼ばれる (active=false、Indicator が lastError を再読込できるよう)', async () => {
       api.rejectNext = new Error('NotAllowedError');
       const mgr = new WakeLockManager({ wakeLockApi: api });
       const listener = vi.fn();
       mgr.onChange(listener);
       await mgr.acquire();
-      expect(listener).not.toHaveBeenCalled();
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(false);
+      expect(mgr.getLastError()?.name).toBe('Error');
     });
 
     it('listener が throw しても他の listener と本体ロジックは止まらない', async () => {
@@ -249,6 +251,63 @@ describe('WakeLockManager', () => {
       await expect(mgr.acquire()).resolves.toBeUndefined();
       expect(badListener).toHaveBeenCalledTimes(1);
       expect(goodListener).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getLastError (Phase 7 post-v0.9.0 診断用)', () => {
+    it('初期状態で null', () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      expect(mgr.getLastError()).toBeNull();
+    });
+
+    it('wakeLockApi が null なら NotSupported を返す', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: null });
+      await mgr.acquire();
+      const err = mgr.getLastError();
+      expect(err?.name).toBe('NotSupported');
+      expect(err?.message).toMatch(/navigator\.wakeLock/);
+    });
+
+    it('request が DOMException を投げたら name と message を捕捉', async () => {
+      api.rejectNext = Object.assign(new Error('user gesture missing'), {
+        name: 'NotAllowedError',
+      });
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      await mgr.acquire();
+      const err = mgr.getLastError();
+      expect(err?.name).toBe('NotAllowedError');
+      expect(err?.message).toBe('user gesture missing');
+    });
+
+    it('acquire 成功で lastError が null にクリアされる', async () => {
+      api.rejectNext = Object.assign(new Error('boom'), { name: 'NotAllowedError' });
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      await mgr.acquire();
+      expect(mgr.getLastError()).not.toBeNull();
+      // 次回の acquire は成功
+      await mgr.acquire();
+      expect(mgr.getLastError()).toBeNull();
+    });
+
+    it('release で lastError がクリアされる', async () => {
+      api.rejectNext = Object.assign(new Error('boom'), { name: 'NotAllowedError' });
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      await mgr.acquire();
+      expect(mgr.getLastError()).not.toBeNull();
+      await mgr.release();
+      expect(mgr.getLastError()).toBeNull();
+    });
+
+    it('Error 以外を投げても UnknownError 名で記録', async () => {
+      api.request = vi.fn(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-throw-literal
+        throw 'string error';
+      });
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      await mgr.acquire();
+      const err = mgr.getLastError();
+      expect(err?.name).toBe('UnknownError');
+      expect(err?.message).toBe('string error');
     });
   });
 });
