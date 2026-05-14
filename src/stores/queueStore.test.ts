@@ -530,4 +530,242 @@ describe('queueStore', () => {
       expect(useQueueStore.getState().isProcessing).toBe(false);
     });
   });
+
+  describe('retry()', () => {
+    beforeEach(async () => {
+      await useQueueStore.getState().init();
+    });
+
+    it('failed item を queued に戻して processNext で再起動', async () => {
+      const file = new File(['x'], 'a.mov');
+      const add = await useQueueStore.getState().add([file], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      const id = add.addedIds[0]!;
+      await flush();
+      mockEnv.fail(id, 'first failure');
+      await flush();
+      expect(useQueueStore.getState().items[0]?.status).toBe('failed');
+      const spawnBefore = mockEnv.spawnCount;
+
+      await useQueueStore.getState().retry(id);
+      await flush();
+      const item = useQueueStore.getState().items[0];
+      expect(item?.status).toBe('starting');
+      expect(item?.progress).toBe(0);
+      expect(mockEnv.spawnCount).toBe(spawnBefore + 1);
+      // error フィールドは消えている (variant が failed → 非 failed に変わった)
+      expect((item as { error?: string }).error).toBeUndefined();
+    });
+
+    it('cancelled item も retry できる', async () => {
+      const file = new File(['x'], 'a.mov');
+      const add = await useQueueStore.getState().add([file], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      const id = add.addedIds[0]!;
+      await flush();
+      mockEnv.cancel(id);
+      await flush();
+      expect(useQueueStore.getState().items[0]?.status).toBe('cancelled');
+
+      await useQueueStore.getState().retry(id);
+      await flush();
+      const item = useQueueStore.getState().items[0];
+      expect(item?.status).toBe('starting');
+    });
+
+    it('done item の retry は no-op (input 削除済み)', async () => {
+      const file = new File(['x'], 'a.mov');
+      const add = await useQueueStore.getState().add([file], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      const id = add.addedIds[0]!;
+      await flush();
+      mockEnv.succeed(id);
+      await flush();
+      const before = useQueueStore.getState().items[0];
+      expect(before?.status).toBe('done');
+      const spawnBefore = mockEnv.spawnCount;
+
+      await useQueueStore.getState().retry(id);
+      await flush();
+      const after = useQueueStore.getState().items[0];
+      expect(after?.status).toBe('done');
+      expect(mockEnv.spawnCount).toBe(spawnBefore);
+    });
+
+    it('inputOpfsPath="" の failed item は retry no-op (defensive)', async () => {
+      // 通常 failed では input は残るが、不整合状態を強制的に作って検証
+      await saveQueueItem(makeItem('orphan', 'failed', { inputOpfsPath: '', error: 'x' }));
+      _resetQueueStoreForTest();
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+      await flush();
+      const spawnBefore = mockEnv.spawnCount;
+
+      await useQueueStore.getState().retry('orphan');
+      await flush();
+      expect(useQueueStore.getState().items.find((i) => i.id === 'orphan')?.status).toBe('failed');
+      expect(mockEnv.spawnCount).toBe(spawnBefore);
+    });
+
+    it('queued/starting/processing の retry は no-op', async () => {
+      const file = new File(['x'], 'a.mov');
+      const add = await useQueueStore.getState().add([file], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      const id = add.addedIds[0]!;
+      await flush();
+      // starting 中に retry 呼び出し → no-op
+      const spawnBefore = mockEnv.spawnCount;
+      expect(useQueueStore.getState().items[0]?.status).toBe('starting');
+      await useQueueStore.getState().retry(id);
+      await flush();
+      expect(mockEnv.spawnCount).toBe(spawnBefore);
+    });
+
+    it('存在しない id の retry は no-op', async () => {
+      await expect(useQueueStore.getState().retry('missing')).resolves.toBeUndefined();
+    });
+
+    it('retry 後の addedAt は元の値を保持 (FIFO 順序維持)', async () => {
+      const file = new File(['x'], 'a.mov');
+      const add = await useQueueStore.getState().add([file], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      const id = add.addedIds[0]!;
+      await flush();
+      const originalAddedAt = useQueueStore.getState().items[0]!.addedAt;
+      mockEnv.fail(id);
+      await flush();
+      await useQueueStore.getState().retry(id);
+      await flush();
+      expect(useQueueStore.getState().items[0]?.addedAt).toBe(originalAddedAt);
+    });
+  });
+
+  describe('clearCompleted()', () => {
+    beforeEach(async () => {
+      await useQueueStore.getState().init();
+    });
+
+    it('done / failed / cancelled をまとめて削除', async () => {
+      await saveQueueItem(makeItem('d1', 'done', { progress: 100 }));
+      await saveQueueItem(makeItem('f1', 'failed', { error: 'x' }));
+      await saveQueueItem(makeItem('c1', 'cancelled'));
+      await saveQueueItem(makeItem('q1', 'queued'));
+      _resetQueueStoreForTest();
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+      await flush();
+
+      await useQueueStore.getState().clearCompleted();
+      await flush();
+      const items = useQueueStore.getState().items;
+      // q1 は queued なので残る (init で processNext が走り starting/processing になる可能性も)
+      expect(items.map((i) => i.id).sort()).toEqual(['q1']);
+    });
+
+    it('terminal アイテムが無ければ何もしない (queued/starting/processing は残る)', async () => {
+      const file = new File(['x'], 'a.mov');
+      await useQueueStore.getState().add([file], 'standard-hevc');
+      await flush();
+      const lenBefore = useQueueStore.getState().items.length;
+      await useQueueStore.getState().clearCompleted();
+      expect(useQueueStore.getState().items.length).toBe(lenBefore);
+    });
+
+    it('空 queue で no-op', async () => {
+      await expect(useQueueStore.getState().clearCompleted()).resolves.toBeUndefined();
+      expect(useQueueStore.getState().items).toHaveLength(0);
+    });
+  });
+
+  describe('effectiveParallelism()', () => {
+    beforeEach(async () => {
+      await useQueueStore.getState().init();
+    });
+
+    function presetH264() {
+      return {
+        key: 'compat-h264' as const,
+        label: 'H264',
+        description: '',
+        codec: 'h264-high' as const,
+        maxLongEdge: 1080,
+        videoBitrate: 5_000_000,
+        audioBitrate: 128_000,
+      };
+    }
+
+    function presetHevc() {
+      return {
+        key: 'standard-hevc' as const,
+        label: 'HEVC',
+        description: '',
+        codec: 'hevc' as const,
+        maxLongEdge: 1080,
+        videoBitrate: 3_000_000,
+        audioBitrate: 128_000,
+      };
+    }
+
+    it('parallelism=1 なら preset によらず 1', () => {
+      // beforeEach の resetAll で hardwareConcurrency=4 → parallelism=1
+      expect(useQueueStore.getState().effectiveParallelism(presetHevc())).toBe(1);
+      expect(useQueueStore.getState().effectiveParallelism(presetH264())).toBe(1);
+    });
+
+    it('parallelism=2 + hevcBenchSlowdown=null + HEVC → 2 (null は false 扱い)', async () => {
+      _resetQueueStoreForTest();
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          storage: (globalThis as { navigator: { storage: unknown } }).navigator.storage,
+          hardwareConcurrency: 8,
+        },
+        configurable: true,
+        writable: true,
+      });
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBeNull();
+      expect(useQueueStore.getState().effectiveParallelism(presetHevc())).toBe(2);
+    });
+
+    it('parallelism=2 + hevcBenchSlowdown=true + HEVC → 1 に降格', () => {
+      _resetQueueStoreForTest();
+      useQueueStore.setState({ parallelism: 2, hevcBenchSlowdown: true });
+      expect(useQueueStore.getState().effectiveParallelism(presetHevc())).toBe(1);
+    });
+
+    it('parallelism=2 + hevcBenchSlowdown=true + H.264 → 2 のまま', () => {
+      _resetQueueStoreForTest();
+      useQueueStore.setState({ parallelism: 2, hevcBenchSlowdown: true });
+      expect(useQueueStore.getState().effectiveParallelism(presetH264())).toBe(2);
+    });
+
+    it('processNext は HEVC 2 件 + slowdown=true で 1 件しか起動しない', async () => {
+      _resetQueueStoreForTest();
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          storage: (globalThis as { navigator: { storage: unknown } }).navigator.storage,
+          hardwareConcurrency: 8,
+        },
+        configurable: true,
+        writable: true,
+      });
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+      // slowdown を強制
+      useQueueStore.setState({ hevcBenchSlowdown: true });
+
+      const f1 = new File(['a'], 'a.mov');
+      const f2 = new File(['b'], 'b.mov');
+      await useQueueStore.getState().add([f1, f2], 'standard-hevc');
+      await flush();
+      // HEVC 同士は同時 1 件のみ
+      expect(mockEnv.spawnCount).toBe(1);
+      const items = useQueueStore.getState().items;
+      const starting = items.filter((i) => i.status === 'starting').length;
+      const queued = items.filter((i) => i.status === 'queued').length;
+      expect(starting).toBe(1);
+      expect(queued).toBe(1);
+    });
+  });
 });

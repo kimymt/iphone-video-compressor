@@ -1,16 +1,26 @@
 // Phase 4b: 1 アイテム分の UI。6 ステータスに応じてアイコン / 進捗バー / アクションを切り替える。
+// Phase 4c: failed/cancelled に Retry ボタンを追加 (input が残っていれば有効)。
 // CLAUDE.md「インタラクションステートカバレッジ」表に対応。
 //
-// Share / Retry ボタンは UI を用意せず、Phase 4c (retry) / Phase 5 (share) で追加する。
+// Share ボタンは Phase 5 で追加する。
 // 本ファイルが提供するのは:
-// - queued: Clock + テキスト + Remove
+// - queued: Clock + テキスト + Cancel + Remove
 // - starting: Loader (spin) + テキスト + Cancel
 // - processing: ProgressBar + percent + ETA + Cancel
 // - done: CheckCircle2 (success) + 圧縮率 + Remove
-// - failed: AlertTriangle (error) + エラーメッセージ + Remove
-// - cancelled: XCircle (secondary) + テキスト + Remove
+// - failed: AlertTriangle (error) + エラーメッセージ + Retry + Remove
+// - cancelled: XCircle (secondary) + テキスト + Retry + Remove
 
-import { Clock, Loader, CheckCircle2, AlertTriangle, XCircle, X, Trash2 } from 'lucide-react';
+import {
+  Clock,
+  Loader,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  X,
+  Trash2,
+  RefreshCw,
+} from 'lucide-react';
 import { useQueueStore } from '../stores/queueStore';
 import { formatBytes, formatDuration } from '../lib/format';
 import type { QueueItem } from '../lib/types';
@@ -89,9 +99,14 @@ function StatusIcon({ status }: { status: QueueItem['status'] }) {
 export default function QueueItemRow({ item }: QueueItemProps) {
   const cancel = useQueueStore((s) => s.cancel);
   const remove = useQueueStore((s) => s.remove);
+  const retry = useQueueStore((s) => s.retry);
 
   const showProgressBar = item.status === 'processing';
   const showCancelBtn = item.status === 'queued' || item.status === 'starting' || item.status === 'processing';
+  // Retry は failed / cancelled で表示。done は input 削除済みなので表示しない (Phase 4a 仕様)。
+  const showRetryBtn = item.status === 'failed' || item.status === 'cancelled';
+  // 防御: 不整合状態 (failed なのに input が空) では disable で残す
+  const retryDisabled = !item.inputOpfsPath;
   const showRemoveBtn = !showCancelBtn || item.status === 'queued';
   // queued は cancel と remove 両方表示。queued の cancel は items に残す (cancelled に遷移)、
   // remove は削除。
@@ -126,6 +141,21 @@ export default function QueueItemRow({ item }: QueueItemProps) {
               aria-label={`${item.fileName} の処理を中止`}
             >
               <X aria-hidden="true" size={18} />
+            </button>
+          )}
+          {showRetryBtn && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!retryDisabled) void retry(item.id);
+              }}
+              disabled={retryDisabled}
+              className="ml-1 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--accent)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--label-tertiary)] disabled:hover:bg-transparent"
+              aria-label={`${item.fileName} を再試行`}
+              aria-disabled={retryDisabled || undefined}
+              title={retryDisabled ? '入力ファイルが削除されているため再試行できません' : undefined}
+            >
+              <RefreshCw aria-hidden="true" size={18} />
             </button>
           )}
           {showRemoveBtn && (

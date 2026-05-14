@@ -222,6 +222,41 @@ Phase 6 の `registerType: 'autoUpdate'` は処理中のジョブを中断する
 
 ---
 
+## V2: HEVC 並列ベンチマーク (hevcBenchSlowdown 自動判定)
+
+**何:**
+端末で「HEVC を 2 並列で encode したときに 1 並列より遅くなるか」をベンチマークし、結果を `localStorage.hevcBenchSlowdown` に保存。`queueStore.effectiveParallelism(preset)` が hevcBenchSlowdown=true のとき HEVC を 1 並列に降格する。
+
+**Why:**
+VideoToolbox の HEVC エンコーダは単一ハードウェアリソース。2 並列で逆に遅くなる端末がある (CLAUDE.md ハマりどころ 17)。一方、A17/M シリーズ世代では並列が効くこともある。実機データで判定したい。
+
+**現状 (Phase 4c 終了時点):**
+- `effectiveParallelism(preset)` は store に実装済み。`hevcBenchSlowdown === true` のときに HEVC を 1 並列に降格するロジックは既に動く。
+- 自動ベンチは実装していない。`hevcBenchSlowdown` は `null` (= 未計測) で初期化、`null` を false 扱い (= 降格しない)。
+- 結果として現状は parallelism = effectiveParallelism。
+- iPhone Air は `navigator.hardwareConcurrency=4` capped で `parallelism=1` のため、bench を実装しても今のところ効果なし。Mac (8+ コア報告) で 2 並列が選ばれた場合のみ意味を持つ。
+
+**Pros:**
+- Mac やハイエンド iPad で HEVC 並列が遅い端末を自動的に 1 並列に落とせる
+- ユーザーが設定を意識しなくて済む
+
+**Cons:**
+- 60 秒の動画を 2 回処理するベンチは初回起動 UX を大きく損なう (バックグラウンドで走らせるか、初回ジョブ後に走らせるかは要設計)
+- ベンチ用の合成動画 (テストパターン) を Worker 内で生成する仕組みが必要
+- ベンチ実行中に実ジョブが入ったときの優先制御が必要
+
+**スコープ:**
+- 1〜2 日 (合成入力生成、並列タイミング計測、結果保存、バックグラウンド実行、SettingsSheet からの再実行 UI)
+
+**Context:**
+- CLAUDE.md「実装フェーズ > Phase 4」で当初 Phase 4 に含めていたが、Phase 4c 着手時にユーザー判断で V2 へ退避 (2026-05-15 のセッション)
+- 必要なときに store 側の `hevcBenchSlowdown` を上書きすれば即座に降格する API は揃っている
+- Phase 6 の SettingsSheet 実装時に「並列ベンチを実行」ボタンを置く案も検討
+
+**Depends on:** Phase 6 (SettingsSheet) 完了後、もしくは需要に応じて単独実施
+
+---
+
 ## 検討: HEVC HDR 出力（V2 + 1）
 
 **何:**

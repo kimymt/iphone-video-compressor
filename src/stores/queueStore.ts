@@ -1,5 +1,7 @@
 // Zustand store。Phase 4a で Worker 連携 + 処理ループを追加。
-// cancel/retry/share/clearCompleted/HEVC ベンチ判定は Phase 4c。
+// Phase 4b で cancel、Phase 4c で retry / clearCompleted / effectiveParallelism を追加。
+// HEVC ベンチは Phase 4c では作らない (TODOS.md 参照)。
+// effectiveParallelism は hevcBenchSlowdown=== null/false なら parallelism と同等。
 
 import { create } from 'zustand';
 import type { QueueItem, PresetKey, Preset } from '../lib/types';
@@ -70,7 +72,30 @@ export type QueueStoreActions = {
    */
   cancel: (id: string) => Promise<void>;
   /**
+   * failed / cancelled の item を 'queued' に戻して processNext を起動する。
+   * 入力 OPFS が残っていること (inputOpfsPath !== '') が前提。
+   * done からの retry は不可 (done 遷移時に input を削除しているため)。
+   * queued / starting / processing / done の状態では no-op。
+   */
+  retry: (id: string) => Promise<void>;
+  /**
+   * done / failed / cancelled (= terminal な) アイテムをまとめて削除する。
+   * OPFS の入出力と IndexedDB を含めて remove() と同じ後始末を行う。
+   * queued / starting / processing は残す。
+   */
+  clearCompleted: () => Promise<void>;
+  /**
+   * preset 固有の並列度上限。
+   * - parallelism=1 なら preset を問わず 1
+   * - hevc + hevcBenchSlowdown=true なら 1 (VideoToolbox の単一リソース対策、ハマりどころ 17)
+   * - その他は parallelism (1 or 2)
+   * hevcBenchSlowdown が null (= 未計測) は false 扱い。
+   * 実機ベンチでの動的判定は V2 (TODOS.md「V2: HEVC 並列ベンチマーク」)。
+   */
+  effectiveParallelism: (preset: Preset) => 1 | 2;
+  /**
    * 'queued' なアイテムを並列度の上限まで起動する。
+   * 並列度は effectiveParallelism(preset) で per-preset に決まる。
    * add() / init() / 各ジョブ完了時に自動呼び出し。手動でも呼べる (idempotent)。
    */
   processNext: () => void;
@@ -241,30 +266,99 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     // done / failed / cancelled は no-op
   },
 
+  async retry(id) {
+    const item = get().items.find((i) => i.id === id);
+    if (!item) return;
+    if (item.status !== 'failed' && item.status !== 'cancelled') return;
+    if (!item.inputOpfsPath) {
+      // done 遷移で input 削除済みの状態。UI 側で disabled の想定だが防御。
+      return;
+    }
+
+    // failed variant の `error` を切り離し queued に戻す。
+    // discriminated union を維持するため明示的に新しいオブジェクトを構築する。
+    // addedAt は保持して FIFO 順序を維持。中途出力 / ephemeral フィールドはクリア。
+    const retried: QueueItem = {
+      id: item.id,
+      fileName: item.fileName,
+      inputSize: item.inputSize,
+      inputOpfsPath: item.inputOpfsPath,
+      preset: item.preset,
+      addedAt: item.addedAt,
+      progress: 0,
+      status: 'queued',
+    };
+
+    set((state) => ({
+      items: state.items.map((i) => (i.id === id ? retried : i)),
+    }));
+    await saveQueueItem(retried).catch(() => {});
+    // 中途出力が残っていれば削除 (cancelled は runJob 側で削除しているはずだが defensive)
+    await deleteFromOpfs(outputPath(id)).catch(() => {});
+
+    get().processNext();
+  },
+
+  async clearCompleted() {
+    const targets = get()
+      .items.filter(
+        (i) => i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
+      )
+      .map((i) => i.id);
+    // remove() を順次呼ぶ。実行中ジョブには触らないので abort 経路は no-op。
+    for (const id of targets) {
+      await get().remove(id);
+    }
+  },
+
+  effectiveParallelism(preset) {
+    const state = get();
+    if (state.parallelism === 1) return 1;
+    if (preset.codec === 'hevc' && state.hevcBenchSlowdown === true) return 1;
+    return 2;
+  },
+
   processNext() {
     const state = get();
     const running = state.items.filter(
       (i) => i.status === 'starting' || i.status === 'processing',
     ).length;
-    const slots = state.parallelism - running;
-    if (slots <= 0) {
-      // 余裕がなくても isProcessing フラグは管理しておく
+
+    const queued = state.items
+      .filter((i) => i.status === 'queued')
+      .sort((a, b) => a.addedAt - b.addedAt);
+
+    if (queued.length === 0) {
       set({ isProcessing: running > 0 });
       return;
     }
 
-    const nextItems = state.items
-      .filter((i) => i.status === 'queued')
-      .sort((a, b) => a.addedAt - b.addedAt)
-      .slice(0, slots);
+    // per-item で limit を計算しながら起動可能なジョブを集める。
+    // 例: parallelism=2 / hevcBenchSlowdown=true で queued=[hevc1, hevc2] なら
+    //     hevc1 だけ起動 (limit=1)。queued=[h264a, h264b] なら 2 件起動 (limit=2)。
+    const toStart: QueueItem[] = [];
+    let projected = running;
+    for (const item of queued) {
+      const preset = findPreset(item.preset);
+      // 無効プリセットの item はそのまま runJob に渡して markFailed させる。
+      // limit 判定なしで通すと無限に進むため、projected は増やさない (terminal 即遷移)。
+      if (!preset) {
+        toStart.push(item);
+        continue;
+      }
+      const limit = state.effectiveParallelism(preset);
+      if (projected >= limit) break;
+      toStart.push(item);
+      projected++;
+    }
 
-    if (nextItems.length === 0) {
+    if (toStart.length === 0) {
       set({ isProcessing: running > 0 });
       return;
     }
 
     set({ isProcessing: true });
-    for (const item of nextItems) {
+    for (const item of toStart) {
       void runJob(set, get, item);
     }
   },

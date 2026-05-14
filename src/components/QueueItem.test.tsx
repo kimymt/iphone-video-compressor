@@ -28,6 +28,7 @@ beforeEach(() => {
   // queueStore の関数を mock。実体は呼ばない。
   vi.spyOn(useQueueStore.getState(), 'cancel').mockResolvedValue(undefined);
   vi.spyOn(useQueueStore.getState(), 'remove').mockResolvedValue(undefined);
+  vi.spyOn(useQueueStore.getState(), 'retry').mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -95,17 +96,19 @@ describe('QueueItem — レンダリング (6 ステータス)', () => {
     expect(screen.queryByLabelText(/処理を中止/)).toBeNull();
   });
 
-  it('failed: AlertTriangle + エラーメッセージ + Remove', () => {
+  it('failed: AlertTriangle + エラーメッセージ + Retry + Remove', () => {
     render(<QueueItemRow item={makeItem('failed', { error: 'unsupported codec' })} />);
     expect(screen.getByText('unsupported codec')).toBeInTheDocument();
     expect(screen.getByLabelText(/削除/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/再試行/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/処理を中止/)).toBeNull();
   });
 
-  it('cancelled: XCircle + キャンセル済み + Remove', () => {
+  it('cancelled: XCircle + キャンセル済み + Retry + Remove', () => {
     render(<QueueItemRow item={makeItem('cancelled')} />);
     expect(screen.getByText(/キャンセル済み/)).toBeInTheDocument();
     expect(screen.getByLabelText(/削除/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/再試行/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/処理を中止/)).toBeNull();
   });
 });
@@ -133,6 +136,46 @@ describe('QueueItem — アクション', () => {
     fireEvent.click(screen.getByLabelText(/削除/));
     expect(cancelSpy).toHaveBeenCalledWith('item-1');
     expect(removeSpy).toHaveBeenCalledWith('item-1');
+  });
+
+  it('failed の Retry ボタンタップで queueStore.retry(id) を呼ぶ', () => {
+    const retrySpy = vi.spyOn(useQueueStore.getState(), 'retry');
+    render(<QueueItemRow item={makeItem('failed', { error: 'x' })} />);
+    fireEvent.click(screen.getByLabelText(/再試行/));
+    expect(retrySpy).toHaveBeenCalledWith('item-1');
+  });
+
+  it('cancelled の Retry ボタンタップでも queueStore.retry(id) を呼ぶ', () => {
+    const retrySpy = vi.spyOn(useQueueStore.getState(), 'retry');
+    render(<QueueItemRow item={makeItem('cancelled')} />);
+    fireEvent.click(screen.getByLabelText(/再試行/));
+    expect(retrySpy).toHaveBeenCalledWith('item-1');
+  });
+
+  it('inputOpfsPath="" の failed で Retry は disabled、click でも retry は呼ばれない', () => {
+    const retrySpy = vi.spyOn(useQueueStore.getState(), 'retry');
+    render(<QueueItemRow item={makeItem('failed', { error: 'x', inputOpfsPath: '' })} />);
+    const btn = screen.getByLabelText(/再試行/);
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(btn);
+    expect(retrySpy).not.toHaveBeenCalled();
+  });
+
+  it('done では Retry ボタンは表示されない', () => {
+    render(<QueueItemRow item={makeItem('done', { outputSize: 100, inputOpfsPath: '' })} />);
+    expect(screen.queryByLabelText(/再試行/)).toBeNull();
+  });
+
+  it('processing / queued / starting では Retry ボタンは表示されない', () => {
+    const { unmount: u1 } = render(<QueueItemRow item={makeItem('queued')} />);
+    expect(screen.queryByLabelText(/再試行/)).toBeNull();
+    u1();
+    const { unmount: u2 } = render(<QueueItemRow item={makeItem('starting')} />);
+    expect(screen.queryByLabelText(/再試行/)).toBeNull();
+    u2();
+    render(<QueueItemRow item={makeItem('processing', { progress: 30 })} />);
+    expect(screen.queryByLabelText(/再試行/)).toBeNull();
   });
 });
 
