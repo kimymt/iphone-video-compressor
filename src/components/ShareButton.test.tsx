@@ -1,9 +1,11 @@
 // Phase 5: ShareButton のレンダリング + クリック動作テスト。
+// Phase 7: onResult prop 廃止、結果は toastStore に push されることを検証。
 // readFromOpfs と shareFile は vi.mock で stub する。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import ShareButton, { deriveShareFileName } from './ShareButton';
+import { useToastStore, _resetToastStoreForTest } from '../stores/toastStore';
 
 vi.mock('../db/opfs', () => ({
   readFromOpfs: vi.fn(),
@@ -21,6 +23,7 @@ const shareFileMock = shareFile as unknown as ReturnType<typeof vi.fn>;
 beforeEach(() => {
   readFromOpfsMock.mockReset();
   shareFileMock.mockReset();
+  _resetToastStoreForTest();
 });
 
 afterEach(() => {
@@ -48,15 +51,12 @@ describe('ShareButton', () => {
     expect(btn).not.toBeDisabled();
   });
 
-  it('クリックで readFromOpfs → shareFile が呼ばれる', async () => {
+  it('クリックで readFromOpfs → shareFile が呼ばれる、shared は silent (toast なし)', async () => {
     readFromOpfsMock.mockResolvedValueOnce(
       new File(['mp4'], 'inner.mp4', { type: 'video/mp4' }),
     );
     shareFileMock.mockResolvedValueOnce({ kind: 'shared' });
-    const onResult = vi.fn();
-    render(
-      <ShareButton outputOpfsPath="outputs/abc.mp4" fileName="orig.MOV" onResult={onResult} />,
-    );
+    render(<ShareButton outputOpfsPath="outputs/abc.mp4" fileName="orig.MOV" />);
     fireEvent.click(screen.getByTestId('share-button'));
     await waitFor(() => {
       expect(readFromOpfsMock).toHaveBeenCalledWith('outputs/abc.mp4');
@@ -64,7 +64,53 @@ describe('ShareButton', () => {
     });
     const [, sharedFileName] = shareFileMock.mock.calls[0]!;
     expect(sharedFileName).toBe('orig_compressed.mp4');
-    expect(onResult).toHaveBeenCalledWith({ kind: 'shared' });
+    expect(useToastStore.getState().items).toHaveLength(0);
+  });
+
+  it('downloaded は success トースト', async () => {
+    readFromOpfsMock.mockResolvedValueOnce(new File(['x'], 'x.mp4'));
+    shareFileMock.mockResolvedValueOnce({ kind: 'downloaded' });
+    render(<ShareButton outputOpfsPath="outputs/x.mp4" fileName="x.mov" />);
+    fireEvent.click(screen.getByTestId('share-button'));
+    await waitFor(() => expect(useToastStore.getState().items).toHaveLength(1));
+    const t = useToastStore.getState().items[0]!;
+    expect(t.kind).toBe('success');
+    expect(t.message).toContain('ダウンロードを開始しました');
+  });
+
+  it('cancelled は info トースト「共有がキャンセルされました」', async () => {
+    readFromOpfsMock.mockResolvedValueOnce(new File(['x'], 'x.mp4'));
+    shareFileMock.mockResolvedValueOnce({ kind: 'cancelled' });
+    render(<ShareButton outputOpfsPath="outputs/x.mp4" fileName="x.mov" />);
+    fireEvent.click(screen.getByTestId('share-button'));
+    await waitFor(() => expect(useToastStore.getState().items).toHaveLength(1));
+    const t = useToastStore.getState().items[0]!;
+    expect(t.kind).toBe('info');
+    expect(t.message).toBe('共有がキャンセルされました');
+  });
+
+  it('shareFile.failed は error トースト + エラーメッセージ', async () => {
+    readFromOpfsMock.mockResolvedValueOnce(new File(['x'], 'x.mp4'));
+    shareFileMock.mockResolvedValueOnce({ kind: 'failed', error: 'no permission' });
+    render(<ShareButton outputOpfsPath="outputs/x.mp4" fileName="x.mov" />);
+    fireEvent.click(screen.getByTestId('share-button'));
+    await waitFor(() => expect(useToastStore.getState().items).toHaveLength(1));
+    const t = useToastStore.getState().items[0]!;
+    expect(t.kind).toBe('error');
+    expect(t.message).toContain('共有に失敗しました');
+    expect(t.message).toContain('no permission');
+  });
+
+  it('readFromOpfs が throw → read-failed の error トースト', async () => {
+    readFromOpfsMock.mockRejectedValueOnce(new Error('not found'));
+    render(<ShareButton outputOpfsPath="outputs/x.mp4" fileName="x.mov" />);
+    fireEvent.click(screen.getByTestId('share-button'));
+    await waitFor(() => expect(useToastStore.getState().items).toHaveLength(1));
+    const t = useToastStore.getState().items[0]!;
+    expect(t.kind).toBe('error');
+    expect(t.message).toContain('出力ファイルの読み込みに失敗しました');
+    expect(t.message).toContain('not found');
+    expect(shareFileMock).not.toHaveBeenCalled();
   });
 
   it('share 中は disabled + Loader (aria-busy=true)', async () => {
@@ -80,33 +126,9 @@ describe('ShareButton', () => {
     fireEvent.click(btn);
     await waitFor(() => expect(btn).toBeDisabled());
     expect(btn).toHaveAttribute('aria-busy', 'true');
-    // 解決
     resolveRead?.(new File(['x'], 'x.mp4', { type: 'video/mp4' }));
     shareFileMock.mockResolvedValueOnce({ kind: 'shared' });
     await waitFor(() => expect(btn).not.toBeDisabled());
-  });
-
-  it('readFromOpfs が throw したら onResult に read-failed を返す', async () => {
-    readFromOpfsMock.mockRejectedValueOnce(new Error('not found'));
-    const onResult = vi.fn();
-    render(
-      <ShareButton outputOpfsPath="outputs/x.mp4" fileName="x.mov" onResult={onResult} />,
-    );
-    fireEvent.click(screen.getByTestId('share-button'));
-    await waitFor(() => expect(onResult).toHaveBeenCalled());
-    expect(onResult).toHaveBeenCalledWith({ kind: 'read-failed', error: 'not found' });
-    expect(shareFileMock).not.toHaveBeenCalled();
-  });
-
-  it('shareFile が cancelled でも onResult はそのまま通知 (download fallback しない)', async () => {
-    readFromOpfsMock.mockResolvedValueOnce(new File(['x'], 'x.mp4', { type: 'video/mp4' }));
-    shareFileMock.mockResolvedValueOnce({ kind: 'cancelled' });
-    const onResult = vi.fn();
-    render(
-      <ShareButton outputOpfsPath="outputs/x.mp4" fileName="x.mov" onResult={onResult} />,
-    );
-    fireEvent.click(screen.getByTestId('share-button'));
-    await waitFor(() => expect(onResult).toHaveBeenCalledWith({ kind: 'cancelled' }));
   });
 
   it('busy 中の二重クリックは 1 度しか発火しない', async () => {

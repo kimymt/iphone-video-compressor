@@ -1,6 +1,60 @@
 # TODOS
 
-`/plan-eng-review` (2026-05-14) と `/plan-design-review` (2026-05-14) で MVP から外して将来のバージョンに退避した項目、および MVP 着手前に推奨される検証ステップ。
+`/plan-eng-review` (2026-05-14) と `/plan-design-review` (2026-05-14) で MVP から外して将来のバージョンに退避した項目、および MVP 着手前に推奨される検証ステップ。Phase 7 終了時点 (2026-05-15) に V1.1 候補も追記。
+
+---
+
+## V1.1: SettingsSheet (歯車) の実装
+
+**何:**
+CLAUDE.md「Information Architecture」で計画していた、ナビバー右上の歯車から開く bottom sheet。プリセット選択 / ストレージ使用量バー / カメラ設定案内 / PWA インストールガイドを置く。`glass-panel` クラスを使う Liquid Glass の主要適用箇所のひとつ。
+
+**Why:**
+MVP では FilePicker のプリセットを `'standard-hevc'` ハードコードで通している。プリセットを選びたいユーザーは現状コードを書き換える必要がある。MVP の動作確認は通るが、出荷品としては UI が無いと不十分。
+
+**現状 (Phase 7 終了時点):**
+- `glass-panel` クラス + デザインシステムは `src/index.css` に揃っている
+- プリセット 6 個 + `getAvailablePresets(envCheck)` のロジックは `src/lib/presets.ts` に揃っている
+- `settingsStore.ts` (Zustand) は未作成。`SettingsPanel.tsx` も未作成
+
+**Pros:**
+- ユーザーが画質を自分で選べる
+- ストレージ使用量を見て手動で clearCompleted を促せる
+- カメラ「互換性優先」設定の落とし穴を案内できる
+- HEVC 並列ベンチの手動トリガー UI を置ける (V2 と連動)
+
+**Cons:**
+- Drag-to-dismiss + safe area + reduced motion の sheet 実装はそれなり
+- 既定値のままで動くので「絶対に必要」というわけではない
+
+**スコープ:**
+- 0.5〜1 日 (settingsStore、SettingsPanel、TitleBar の歯車、glass-panel 統合、E2E 1〜2 ケース)
+
+**Depends on:** なし
+
+---
+
+## V1.1: アイコン差し替え (production assets)
+
+**何:**
+`public/icons/` の 4 PNG (icon-192 / icon-512 / icon-maskable / apple-touch-icon) を、デザイナーが作った本物の素材に差し替える。
+
+**現状:**
+すべて ffmpeg で生成したダミー (#0a0a0a 背景 + #0a84ff の中央ブロック)。寸法は spec 通り。
+
+**Why:**
+ホーム画面に追加した際の見た目が現状ダミーで、ブランド体験が損なわれる。
+
+**Pros:**
+- 1 度差し替えれば二度と触らない
+
+**Cons:**
+- 素材作成のデザインコスト
+
+**スコープ:**
+- 素材があれば 5 分。素材が無ければデザインに 1〜2 時間
+
+**Depends on:** MVP 出荷タイミングに合わせて
 
 ---
 

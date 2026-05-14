@@ -2,36 +2,21 @@ import { useEffect, useState } from 'react';
 import UnsupportedScreen from './components/UnsupportedScreen';
 import FilePicker from './components/FilePicker';
 import QueueList from './components/QueueList';
+import ToastStack from './components/Toast';
 import { verifyEnvironment } from './platform/capability';
 import { ensurePersistent } from './platform/storage';
 import { useQueueStore, type AddResult } from './stores/queueStore';
 import { installSideEffects } from './stores/sideEffects';
+import { useToastStore } from './stores/toastStore';
 import { formatBytes } from './lib/format';
 import type { EnvCheck } from './lib/types';
 
 // Phase 4b: 6 ステータス対応の QueueItem + QueueList に統合。
 // Phase 4c: retry + clearCompleted、Phase 5: ShareButton + WakeLock + 完了サウンド。
-// SettingsSheet (歯車) は Phase 6。
-
-function ToastError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  useEffect(() => {
-    const t = setTimeout(onDismiss, 4000);
-    return () => clearTimeout(t);
-  }, [onDismiss]);
-  return (
-    <div
-      role="alert"
-      aria-live="assertive"
-      className="fixed left-1/2 top-[max(env(safe-area-inset-top),16px)] z-50 -translate-x-1/2 rounded-xl bg-[var(--error)] px-4 py-3 text-sm text-white shadow-xl"
-    >
-      {message}
-    </div>
-  );
-}
+// Phase 6: PWA 化。Phase 7: グローバル ToastStack に一元化。
 
 export default function App() {
   const [envCheck, setEnvCheck] = useState<EnvCheck | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
 
   const items = useQueueStore((s) => s.items);
   const init = useQueueStore((s) => s.init);
@@ -70,6 +55,10 @@ export default function App() {
     if (envCheck?.canRun && !initialized) {
       init().catch((err) => {
         console.error('queueStore.init failed:', err);
+        useToastStore.getState().show(
+          'キューの復元に失敗しました。アプリを再起動してください。',
+          { kind: 'error' },
+        );
       });
       ensurePersistent().catch(() => {
         // 失敗しても致命的でない、UI でストレージ状態を表示するだけ。
@@ -102,12 +91,20 @@ export default function App() {
     w.__movieCompresserSetState = useQueueStore.setState;
   }, [initialized, items]);
 
-  const handleAddResult = (result: AddResult) => {
+  /**
+   * add 失敗時の文言を Phase 7 の統一エラーメッセージに揃える。
+   * - quota-exceeded → 「容量が足りません」+「あと約 {X} 必要です」(S9)
+   * - opfs-write-failed → 「書き込みに失敗しました」(S10 相当の add-side)
+   */
+  const handleAddResult = (result: AddResult): void => {
     if (result.ok) return;
+    const toast = useToastStore.getState();
     if (result.reason === 'quota-exceeded') {
-      setToast(`容量が足りません。あと約 ${formatBytes(result.required)} 必要です。`);
+      toast.show(`容量が足りません。あと約 ${formatBytes(result.required)} 必要です。`, {
+        kind: 'error',
+      });
     } else if (result.reason === 'opfs-write-failed') {
-      setToast(`書き込みに失敗しました: ${result.error}`);
+      toast.show(`書き込みに失敗しました: ${result.error}`, { kind: 'error' });
     }
   };
 
@@ -129,7 +126,7 @@ export default function App() {
 
   return (
     <main className="app flex min-h-dvh flex-col bg-[var(--bg)] text-[var(--label)]">
-      {toast && <ToastError message={toast} onDismiss={() => setToast(null)} />}
+      <ToastStack />
 
       <header className="px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
         <h1 className="title text-3xl font-bold">動画圧縮</h1>

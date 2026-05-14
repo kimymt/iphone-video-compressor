@@ -111,9 +111,11 @@ describe('QueueItem — レンダリング (6 ステータス)', () => {
     expect(screen.queryByLabelText(/再試行/)).toBeNull();
   });
 
-  it('failed: AlertTriangle + エラーメッセージ + Retry + Remove', () => {
+  it('failed: AlertTriangle + 「この動画は処理できません」 + エラー詳細 + Retry + Remove (Phase 7 S10)', () => {
     render(<QueueItemRow item={makeItem('failed', { error: 'unsupported codec' })} />);
-    expect(screen.getByText('unsupported codec')).toBeInTheDocument();
+    expect(screen.getByText(/この動画は処理できません/)).toBeInTheDocument();
+    // 生のエラーも併記される (デバッグ用)
+    expect(screen.getByText(/unsupported codec/)).toBeInTheDocument();
     expect(screen.getByLabelText(/削除/)).toBeInTheDocument();
     expect(screen.getByLabelText(/再試行/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/処理を中止/)).toBeNull();

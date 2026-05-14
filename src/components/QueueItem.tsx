@@ -197,7 +197,7 @@ export default function QueueItemRow({ item }: QueueItemProps) {
  * - queued/starting/cancelled: 入力サイズ + ラベル
  * - processing: 入力サイズ + ETA (利用可能なら)
  * - done: 入力 → 出力 + 圧縮率
- * - failed: エラーメッセージ
+ * - failed: Phase 7 で「この動画は処理できません」+ 生のエラー (CLAUDE.md S10)
  */
 function renderSubText(item: QueueItem): string {
   switch (item.status) {
@@ -219,7 +219,8 @@ function renderSubText(item: QueueItem): string {
       return `${formatBytes(item.inputSize)} · 完了`;
     }
     case 'failed':
-      return item.error;
+      // S10: 「この動画は処理できません」 + 生のエラー詳細 (デバッグ用に併記)
+      return `この動画は処理できません · ${item.error}`;
     case 'cancelled':
       return `${formatBytes(item.inputSize)} · ${statusLabel(item.status)}`;
   }
