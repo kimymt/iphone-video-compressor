@@ -76,12 +76,18 @@ export default function App() {
   }, [envCheck?.canRun, initialized, init]);
 
   // dev mode (?dev=1) で E2E から store にアクセスできるよう window に露出。
+  // __movieCompresserStore: 現在の state スナップショット (items / actions)。items 変更で再代入。
+  // __movieCompresserSetState: zustand の setState 関数。Phase 4c E2E で terminal アイテムを
+  // OPFS / IndexedDB を介さずに直接 seed するため (WebKit headless で OPFS が transient に
+  // 失敗するケースを回避)。dev でのみ露出するので本番には影響しない。
   useEffect(() => {
     if (!initialized) return;
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('dev') !== '1') return;
-    (window as unknown as Record<string, unknown>).__movieCompresserStore = useQueueStore.getState();
+    const w = window as unknown as Record<string, unknown>;
+    w.__movieCompresserStore = useQueueStore.getState();
+    w.__movieCompresserSetState = useQueueStore.setState;
   }, [initialized, items]);
 
   const handleAddResult = (result: AddResult) => {
