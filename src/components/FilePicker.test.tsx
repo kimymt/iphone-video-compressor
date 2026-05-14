@@ -3,7 +3,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { indexedDB } from 'fake-indexeddb';
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import FilePicker, { _resetAudioUnlockForTest } from './FilePicker';
+import FilePicker from './FilePicker';
+import { _resetSharedAudioCtxForTest } from '../platform/audio';
 import {
   useQueueStore,
   _resetQueueStoreForTest,
@@ -39,7 +40,7 @@ async function resetAll(opts: { quotaBytes?: number } = {}) {
     writable: true,
   });
   _resetQueueStoreForTest();
-  _resetAudioUnlockForTest();
+  _resetSharedAudioCtxForTest();
   // Worker spawn を noop に差し替え (JSDOM に Worker 無し、テストは UI のみ検証)
   _setWorkerImplsForTest(
     () =>

@@ -1,41 +1,12 @@
 import { useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { useQueueStore, type AddResult } from '../stores/queueStore';
+import { unlockAudio } from '../platform/audio';
 import type { PresetKey } from '../lib/types';
 
-let audioContextUnlocked = false;
-
-/**
- * iOS Safari の audio unlock: 最初のユーザージェスチャーで AudioContext を resume し、
- * 1 サンプルの BufferSource を再生して 'unlocked' 状態にする。
- * Phase 5 で done.m4a を `<audio>` 経由で鳴らすときの前提条件。
- * 既に解除済みなら no-op。
- */
-async function unlockAudio(): Promise<void> {
-  if (audioContextUnlocked) return;
-  try {
-    const Ctx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    if (ctx.state === 'suspended') await ctx.resume();
-    const buf = ctx.createBuffer(1, 1, 22050);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start(0);
-    audioContextUnlocked = true;
-  } catch {
-    // unlock 失敗は致命的でない。Phase 5 の done.m4a 再生時に再試行する。
-  }
-}
-
-/** テスト用: unlock 状態リセット */
-export function _resetAudioUnlockForTest(): void {
-  audioContextUnlocked = false;
-}
+// Phase 2 で audio unlock を導入、Phase 5 でチャイム実装、Phase 7 で audio.ts に統合。
+// ボタンタップは user gesture → 共有 AudioContext を resume して以降の playDoneSound が
+// 同じ ctx で鳴るようにする (CLAUDE.md ハマりどころ 25 + v0.9.0 実機検証で再発見)。
 
 type Props = {
   preset: PresetKey;
@@ -48,13 +19,14 @@ export default function FilePicker({ preset, onResult, disabled = false }: Props
   const [busy, setBusy] = useState(false);
   const add = useQueueStore((s) => s.add);
 
-  const handleClick = async () => {
+  const handleClick = async (): Promise<void> => {
     if (busy || disabled) return;
+    // user gesture を逃さないよう同期的に呼ぶ。失敗してもピッカーは開く。
     await unlockAudio();
     inputRef.current?.click();
   };
 
-  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const files = Array.from(e.target.files ?? []);
     // input を即リセット (同じファイルを連続選択できるように)
     e.target.value = '';

@@ -175,4 +175,80 @@ describe('WakeLockManager', () => {
     api.sentinels[0]!.simulateSystemRelease();
     expect(mgr.isActive()).toBe(false);
   });
+
+  describe('onChange (Phase 7 post-v0.9.0)', () => {
+    it('acquire 成功で listener(true) が呼ばれる', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const listener = vi.fn();
+      mgr.onChange(listener);
+      await mgr.acquire();
+      expect(listener).toHaveBeenCalledWith(true);
+    });
+
+    it('release で listener(false) が呼ばれる', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const listener = vi.fn();
+      await mgr.acquire();
+      mgr.onChange(listener);
+      await mgr.release();
+      expect(listener).toHaveBeenCalledWith(false);
+    });
+
+    it('システム由来 release でも listener(false)', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const listener = vi.fn();
+      await mgr.acquire();
+      mgr.onChange(listener);
+      api.sentinels[0]!.simulateSystemRelease();
+      expect(listener).toHaveBeenCalledWith(false);
+    });
+
+    it('visibility=visible での再取得成功でも listener(true) が再度呼ばれる', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const listener = vi.fn();
+      await mgr.acquire();
+      mgr.onChange(listener);
+      api.sentinels[0]!.simulateSystemRelease();
+      setVisibility('hidden');
+      setVisibility('visible');
+      await new Promise((r) => setTimeout(r, 0));
+      // システム release → false、再取得 → true の 2 回
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener.mock.calls[0]?.[0]).toBe(false);
+      expect(listener.mock.calls[1]?.[0]).toBe(true);
+    });
+
+    it('unsubscribe 戻り値で以降の通知を止められる', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const listener = vi.fn();
+      const unsub = mgr.onChange(listener);
+      await mgr.acquire();
+      expect(listener).toHaveBeenCalledTimes(1);
+      unsub();
+      await mgr.release();
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it('acquire が失敗 (request reject) しても listener は呼ばれない', async () => {
+      api.rejectNext = new Error('NotAllowedError');
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const listener = vi.fn();
+      mgr.onChange(listener);
+      await mgr.acquire();
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('listener が throw しても他の listener と本体ロジックは止まらない', async () => {
+      const mgr = new WakeLockManager({ wakeLockApi: api });
+      const badListener = vi.fn(() => {
+        throw new Error('listener bug');
+      });
+      const goodListener = vi.fn();
+      mgr.onChange(badListener);
+      mgr.onChange(goodListener);
+      await expect(mgr.acquire()).resolves.toBeUndefined();
+      expect(badListener).toHaveBeenCalledTimes(1);
+      expect(goodListener).toHaveBeenCalledTimes(1);
+    });
+  });
 });

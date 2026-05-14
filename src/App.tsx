@@ -3,6 +3,7 @@ import UnsupportedScreen from './components/UnsupportedScreen';
 import FilePicker from './components/FilePicker';
 import QueueList from './components/QueueList';
 import ToastStack from './components/Toast';
+import WakeLockIndicator from './components/WakeLockIndicator';
 import { verifyEnvironment } from './platform/capability';
 import { ensurePersistent } from './platform/storage';
 import { useQueueStore, type AddResult } from './stores/queueStore';
@@ -14,6 +15,7 @@ import type { EnvCheck } from './lib/types';
 // Phase 4b: 6 ステータス対応の QueueItem + QueueList に統合。
 // Phase 4c: retry + clearCompleted、Phase 5: ShareButton + WakeLock + 完了サウンド。
 // Phase 6: PWA 化。Phase 7: グローバル ToastStack に一元化。
+// Phase 7 post-v0.9.0: WakeLockIndicator (実機で「画面 ON 維持」を見える化)。
 
 export default function App() {
   const [envCheck, setEnvCheck] = useState<EnvCheck | null>(null);
@@ -128,8 +130,9 @@ export default function App() {
     <main className="app flex min-h-dvh flex-col bg-[var(--bg)] text-[var(--label)]">
       <ToastStack />
 
-      <header className="px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
+      <header className="flex items-center justify-between gap-3 px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
         <h1 className="title text-3xl font-bold">動画圧縮</h1>
+        <WakeLockIndicator />
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">

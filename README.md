@@ -112,6 +112,12 @@ mediabunny は現状 SharedArrayBuffer を要求しないため `public/_headers
 2. 共有 (□↑) → **ホーム画面に追加**
 3. ホーム画面のアイコンから起動 → standalone モードで動作
 
+### iPhone 検証時のチェックリスト
+
+- **Wake Lock (画面が暗くならない)**: ヘッダ右上に **「画面 ON」** バッジ (Sun アイコン、warning カラー) が出ていれば取得成功。取得失敗時は **「画面 ON 失敗」** (AlertTriangle、error カラー)。短い動画ではスクリーン idle まで到達しないため、3〜5 分かかる動画で確認するのが確実。
+- **完了チャイム**: iPhone 本体側面の **Ring/Silent スイッチが「Silent」(オレンジ)** だと WebAudio は無音になり、アプリ側から override 不可。サウンドが聞こえない場合は (1) Silent スイッチを「Ring」側に倒す (2) 音量を上げる (3) 動画選択ボタンを 1 度タップしてから処理開始 (audio unlock が必要) を確認する。Phase 7 post-v0.9.0 で AudioContext を `unlockAudio` と `playDoneSound` で共有するようにしたため、FilePicker タップが 1 回でもあれば後続のチャイムは鳴るはず。
+- **オフライン起動**: 機内モード ON → ホーム画面アイコンから起動 → メイン画面が出ること。SW precache 14 entries (~660 KiB) が iPhone Safari にキャッシュされる。
+
 ## ディレクトリ構造
 
 ```
