@@ -7,9 +7,21 @@
 import { transcode, TranscodeCancelledError } from '../src/pipeline/transcode';
 import { PRESETS, findPreset } from '../src/lib/presets';
 import type { PresetKey } from '../src/lib/types';
+import {
+  spawnTranscodeWorker,
+  runTranscodeJob,
+  type TranscodeJobResult,
+} from '../src/workers/compressor-client';
+import {
+  writeInputToOpfs,
+  readFromOpfs,
+  deleteFromOpfs,
+  outputPath as opfsOutputPath,
+} from '../src/db/opfs';
 
 const fileInput = document.getElementById('file') as HTMLInputElement;
 const presetSelect = document.getElementById('preset') as HTMLSelectElement;
+const useWorkerCheckbox = document.getElementById('useWorker') as HTMLInputElement;
 const runBtn = document.getElementById('run') as HTMLButtonElement;
 const cancelBtn = document.getElementById('cancel') as HTMLButtonElement;
 const progressEl = document.getElementById('progress') as HTMLProgressElement;
@@ -70,6 +82,13 @@ async function createTempOutputWritable(): Promise<{
   };
 }
 
+// ---- 進捗ハンドラ (両パス共通) ----
+function onProgress(percent: number, currentSec: number, totalSec: number, etaSec: number | null): void {
+  progressEl.value = percent;
+  const etaStr = etaSec === null ? '推定中' : `${Math.max(0, Math.round(etaSec))}s`;
+  log(`  ${percent}% (${currentSec.toFixed(2)}/${totalSec.toFixed(2)}s, ETA ${etaStr})`);
+}
+
 // ---- メイン: run ----
 async function run(): Promise<void> {
   const file = fileInput.files?.[0];
@@ -83,6 +102,7 @@ async function run(): Promise<void> {
     log(`unknown preset: ${presetKey}`, 'err');
     return;
   }
+  const useWorker = useWorkerCheckbox.checked;
 
   runBtn.disabled = true;
   cancelBtn.style.display = 'block';
@@ -94,43 +114,17 @@ async function run(): Promise<void> {
 
   log(`▶ Input: ${file.name} (${formatBytes(file.size)})`, 'label');
   log(`▶ Preset: ${preset.label} (codec=${preset.codec}, maxLongEdge=${preset.maxLongEdge ?? 'null'}, vBitrate=${preset.videoBitrate / 1_000_000} Mbps)`);
+  log(`▶ Path: ${useWorker ? 'Worker (compressor-client → compressor.worker)' : 'main thread (direct transcode call)'}`);
 
   currentController = new AbortController();
   const startMs = performance.now();
 
   try {
-    const { writable, read } = await createTempOutputWritable();
-    log('▶ OPFS output file ready', 'label');
-
-    const result = await transcode(file, writable, {
-      preset,
-      onProgress: (percent, currentSec, totalSec, etaSec) => {
-        progressEl.value = percent;
-        const etaStr = etaSec === null ? '推定中' : `${Math.max(0, Math.round(etaSec))}s`;
-        log(
-          `  ${percent}% (${currentSec.toFixed(2)}/${totalSec.toFixed(2)}s, ETA ${etaStr})`,
-        );
-      },
-      signal: currentController.signal,
-    });
-
-    const elapsedMs = performance.now() - startMs;
-    log(
-      `▶ Done in ${(elapsedMs / 1000).toFixed(2)}s — output ${formatBytes(result.outputSize)} (input was ${formatBytes(file.size)})`,
-      'ok',
-    );
-    const ratio = ((result.outputSize / file.size) * 100).toFixed(1);
-    log(`  圧縮率: ${ratio}% (input → output、小さいほど圧縮されている)`);
-
-    // 読み戻してプレビュー
-    const outputFile = await read();
-    const url = URL.createObjectURL(outputFile);
-    previousObjectUrl = url;
-    videoEl.src = url;
-    videoEl.style.display = 'block';
-    downloadEl.href = url;
-    downloadEl.textContent = `↓ Download spike-transcoded.mp4 (${formatBytes(result.outputSize)})`;
-    downloadEl.style.display = 'block';
+    if (useWorker) {
+      await runViaWorker(file, preset, startMs);
+    } else {
+      await runDirect(file, preset, startMs);
+    }
   } catch (e) {
     if (e instanceof TranscodeCancelledError) {
       log('✗ Cancelled', 'err');
@@ -146,6 +140,101 @@ async function run(): Promise<void> {
     cancelBtn.style.display = 'none';
     currentController = null;
   }
+}
+
+// ---- メインスレッド直呼びパス (Phase 3b core 既存) ----
+async function runDirect(
+  file: File,
+  preset: import('../src/lib/types').Preset,
+  startMs: number,
+): Promise<void> {
+  const { writable, read } = await createTempOutputWritable();
+  log('▶ OPFS output file ready', 'label');
+
+  const result = await transcode(file, writable, {
+    preset,
+    onProgress,
+    signal: currentController!.signal,
+  });
+  reportSuccess(result, file.size, startMs);
+
+  const outputFile = await read();
+  setupPreview(outputFile, result.outputSize);
+}
+
+// ---- Worker 経由パス (Phase 3b worker layer) ----
+async function runViaWorker(
+  file: File,
+  preset: import('../src/lib/types').Preset,
+  startMs: number,
+): Promise<void> {
+  const id = `spike-${Date.now()}`;
+  log('▶ Writing input to OPFS...', 'label');
+  const inputPath = await writeInputToOpfs(file, id);
+  const outPath = opfsOutputPath(id);
+  log(`  input: ${inputPath}`);
+  log(`  output: ${outPath}`);
+
+  log('▶ Spawning Worker...', 'label');
+  const worker = spawnTranscodeWorker();
+
+  log('▶ Running transcode job in Worker...', 'label');
+  let result: TranscodeJobResult;
+  try {
+    result = await runTranscodeJob(worker, {
+      id,
+      inputPath,
+      outputPath: outPath,
+      preset,
+      onStarted: () => log('  worker: started', 'ok'),
+      onProgress,
+      signal: currentController!.signal,
+    });
+  } finally {
+    // 入力 OPFS ファイルは spike では即削除 (本番では done 時に queueStore が削除)
+    try {
+      await deleteFromOpfs(inputPath);
+    } catch {
+      /* 削除失敗は無視 */
+    }
+  }
+
+  if (result.kind === 'failed') {
+    throw new Error(result.error);
+  }
+  if (result.kind === 'cancelled') {
+    throw new TranscodeCancelledError();
+  }
+  // done
+  reportSuccess({ outputSize: result.outputSize, durationSec: result.durationSec }, file.size, startMs);
+  const outputFile = await readFromOpfs(outPath);
+  setupPreview(outputFile, result.outputSize);
+}
+
+// ---- 完了レポート ----
+function reportSuccess(
+  result: { outputSize: number; durationSec: number },
+  inputSize: number,
+  startMs: number,
+): void {
+  const elapsedMs = performance.now() - startMs;
+  log(
+    `▶ Done in ${(elapsedMs / 1000).toFixed(2)}s — output ${formatBytes(result.outputSize)} (input was ${formatBytes(inputSize)})`,
+    'ok',
+  );
+  const ratio = ((result.outputSize / inputSize) * 100).toFixed(1);
+  log(`  圧縮率: ${ratio}% (input → output、小さいほど圧縮されている)`);
+}
+
+// ---- インライン preview / download セットアップ ----
+function setupPreview(outputFile: File, outputSize: number): void {
+  const url = URL.createObjectURL(outputFile);
+  previousObjectUrl = url;
+  videoEl.src = url;
+  videoEl.style.display = 'block';
+  downloadEl.href = url;
+  downloadEl.textContent = `↓ Download spike-transcoded.mp4 (${formatBytes(outputSize)})`;
+  downloadEl.style.display = 'block';
 }
 
 runBtn.addEventListener('click', () => {

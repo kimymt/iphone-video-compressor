@@ -113,6 +113,11 @@
       <select id="preset"></select>
     </label>
 
+    <label class="row" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="useWorker" style="width:auto;flex:0 0 auto;" />
+      Worker 経由で実行 (チェック無しはメインスレッド直呼び)
+    </label>
+
     <button id="run">Run transcode</button>
     <button id="cancel" class="cancel" style="display:none">Cancel</button>
 
