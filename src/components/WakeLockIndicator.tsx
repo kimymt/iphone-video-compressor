@@ -10,7 +10,11 @@
 import { useEffect, useState } from 'react';
 import { Sun, AlertTriangle } from 'lucide-react';
 import { useQueueStore } from '../stores/queueStore';
-import { wakeLockManager, type WakeLockManager } from '../platform/wakeLock';
+import {
+  wakeLockManager,
+  type WakeLockManager,
+  type WakeLockError,
+} from '../platform/wakeLock';
 
 export interface WakeLockIndicatorProps {
   /** テストで別の WakeLockManager を注入できるよう拡張可。デフォルトは singleton。 */
@@ -21,10 +25,15 @@ export default function WakeLockIndicator({ manager }: WakeLockIndicatorProps = 
   const mgr = manager ?? wakeLockManager;
   const isProcessing = useQueueStore((s) => s.isProcessing);
   const [active, setActive] = useState<boolean>(() => mgr.isActive());
+  const [error, setError] = useState<WakeLockError | null>(() => mgr.getLastError());
 
   useEffect(() => {
     setActive(mgr.isActive());
-    const unsub = mgr.onChange(setActive);
+    setError(mgr.getLastError());
+    const unsub = mgr.onChange((a) => {
+      setActive(a);
+      setError(mgr.getLastError());
+    });
     return unsub;
   }, [mgr]);
 
@@ -47,19 +56,24 @@ export default function WakeLockIndicator({ manager }: WakeLockIndicatorProps = 
     );
   }
 
-  // isProcessing だが lock が取れていない: 通知
+  // isProcessing だが lock が取れていない: 通知。エラー名があれば併記して診断材料に。
+  const errLabel = error ? `: ${error.name}` : '';
+  const errTitle = error
+    ? `Wake Lock 取得失敗 (${error.name}): ${error.message}`
+    : 'Wake Lock 取得失敗: 画面が暗くなる可能性があります';
   return (
     <span
       role="status"
       aria-live="polite"
-      aria-label="Wake Lock 取得に失敗しました。画面が暗くなる可能性があります"
+      aria-label={`Wake Lock 取得に失敗しました${errLabel}。画面が暗くなる可能性があります`}
       data-testid="wake-lock-indicator"
       data-state="inactive"
-      title="Wake Lock 取得失敗: 画面が暗くなる可能性があります"
+      data-error-name={error?.name}
+      title={errTitle}
       className="flex items-center gap-1.5 rounded-full bg-[var(--surface)] px-2.5 py-1 text-xs text-[var(--error)]"
     >
       <AlertTriangle aria-hidden="true" size={14} />
-      <span>画面 ON 失敗</span>
+      <span>画面 ON 失敗{errLabel}</span>
     </span>
   );
 }

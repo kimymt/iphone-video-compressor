@@ -5,6 +5,7 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import FilePicker from './FilePicker';
 import { _resetSharedAudioCtxForTest } from '../platform/audio';
+import { wakeLockManager } from '../platform/wakeLock';
 import {
   useQueueStore,
   _resetQueueStoreForTest,
@@ -143,5 +144,26 @@ describe('FilePicker', () => {
     render(<FilePicker preset="standard-hevc" />);
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     expect(input.accept).toBe('video/mp4,video/quicktime,video/*');
+  });
+
+  it('Phase 7 post-v0.9.0: onChange で wakeLockManager.acquire が await の前に呼ばれる', async () => {
+    // FilePicker.handleChange は eager acquire を行う (user gesture を温存するため)。
+    // OPFS の await を挟む前に呼ばれることを spy で検証。
+    const acquireSpy = vi
+      .spyOn(wakeLockManager, 'acquire')
+      .mockResolvedValue(undefined);
+
+    render(<FilePicker preset="standard-hevc" />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['hello'], 'IMG_1.mov', { type: 'video/quicktime' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    // handleChange が同期的に acquire を呼ぶことの確認 (await 前に発火)
+    expect(acquireSpy).toHaveBeenCalledTimes(1);
+
+    // add() の完了も待ってから後始末
+    await waitFor(() => {
+      expect(useQueueStore.getState().items).toHaveLength(1);
+    });
   });
 });

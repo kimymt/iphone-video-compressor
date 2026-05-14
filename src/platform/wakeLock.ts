@@ -27,6 +27,14 @@ export interface WakeLockOptions {
 
 export type WakeLockChangeListener = (active: boolean) => void;
 
+/** 直近の WakeLock request 失敗を診断用に保持するための型。 */
+export interface WakeLockError {
+  /** DOMException.name (例: 'NotAllowedError' / 'NotSupportedError') もしくは独自タグ。 */
+  name: string;
+  /** ユーザ向け文言。詳細不明なら空でもよい。 */
+  message: string;
+}
+
 export class WakeLockManager {
   private lock: WakeLockSentinelLike | null = null;
   private wantAcquired = false;
@@ -34,6 +42,8 @@ export class WakeLockManager {
   private wakeLockApi: WakeLockApiLike | null;
   private doc: Document | null;
   private listeners = new Set<WakeLockChangeListener>();
+  /** 直近の request 失敗の原因。診断 UI から参照する。 */
+  private lastError: WakeLockError | null = null;
 
   constructor(opts: WakeLockOptions = {}) {
     this.wakeLockApi =
@@ -89,6 +99,7 @@ export class WakeLockManager {
   async release(): Promise<void> {
     this.wantAcquired = false;
     this.removeVisibilityHandler();
+    this.lastError = null;
     const hadLock = this.lock !== null;
     const lock = this.lock;
     this.lock = null;
@@ -107,6 +118,11 @@ export class WakeLockManager {
     return this.lock !== null && !this.lock.released;
   }
 
+  /** 直近の request 失敗を返す (取得成功後は null)。 */
+  getLastError(): WakeLockError | null {
+    return this.lastError;
+  }
+
   /** 内部状態を覗くテスト補助。プロダクションコードからは使わない。 */
   _debugState(): { wantAcquired: boolean; hasLock: boolean; hasHandler: boolean } {
     return {
@@ -117,14 +133,27 @@ export class WakeLockManager {
   }
 
   private async requestLock(): Promise<void> {
-    if (!this.wakeLockApi) return;
+    if (!this.wakeLockApi) {
+      this.lastError = {
+        name: 'NotSupported',
+        message: 'navigator.wakeLock が利用できません',
+      };
+      // active 自体は変わらないが Indicator が lastError を再読み込みできるよう通知。
+      this.notify();
+      return;
+    }
     if (this.lock && !this.lock.released) return;
 
     let lock: WakeLockSentinelLike;
     try {
       lock = await this.wakeLockApi.request('screen');
-    } catch {
-      // permission denied / 未対応 → 静かに諦める
+    } catch (err) {
+      // 典型例: NotAllowedError (user gesture 期限切れ等)、SecurityError (HTTPS でない等)
+      this.lastError = {
+        name: err instanceof Error ? err.name : 'UnknownError',
+        message: err instanceof Error ? err.message : String(err),
+      };
+      this.notify();
       return;
     }
 
@@ -135,6 +164,7 @@ export class WakeLockManager {
     }
 
     this.lock = lock;
+    this.lastError = null; // 取得成功でエラー履歴をクリア
     this.notify();
     lock.addEventListener('release', () => {
       // システム (例えば iOS の visibility=hidden) が解放した
