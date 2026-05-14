@@ -2,6 +2,9 @@
 
 iOS 26 専用の、サーバーレスで動く動画圧縮 PWA。すべての処理は iPhone Safari 上で完結し、動画はサーバーへ送信されません。
 
+**本番:** https://ivc.mymt.casa — Cloudflare Pages、main 自動デプロイ
+**ソース:** https://github.com/kimymt/iphone-video-compressor
+
 ## 何ができる
 
 - iPhone で撮影した動画 (HEVC/H.264、MOV/MP4、HDR/HLG 含む) を選んでローカルで圧縮
@@ -93,14 +96,21 @@ npm run test:e2e:offline  # build + preview + オフラインキャッシュ検�
 
 ## デプロイ
 
-**Cloudflare Pages** を想定しています:
+**Cloudflare Pages** で `main` を自動デプロイしています。
 
-- `vite.config.ts` の `base: '/'`
-- ビルド出力は `dist/`、Cloudflare Pages のビルドコマンドは `npm run build`、ビルドディレクトリは `dist`
-- GitHub 連携でゼロコンフィグ、Preview Deployments が Phase ごとの実機確認に便利
-- iOS の Service Worker / OPFS persist / WebCodecs secure context は HTTPS が必須
+- 本番: https://ivc.mymt.casa (カスタムドメイン)
+- Cloudflare 配下のデフォルト URL: `https://iphone-video-compressor.pages.dev` も同じビルド
+- Build command: `npm run build` / Build output: `dist` / Framework preset: None
+- `main` への push でビルド + 再デプロイ、Pull Request ごとに Preview Deployment が自動生成 (`<pr-id>.iphone-video-compressor.pages.dev`)
+- HTTPS は Cloudflare が自動。iOS の Service Worker / OPFS persist / WebCodecs secure context 要件をすべて満たす
 
 mediabunny は現状 SharedArrayBuffer を要求しないため `public/_headers` の COOP/COEP 設定は不要です。
+
+### iPhone 実機で開く
+
+1. iPhone Safari (iOS 26) で https://ivc.mymt.casa を開く
+2. 共有 (□↑) → **ホーム画面に追加**
+3. ホーム画面のアイコンから起動 → standalone モードで動作
 
 ## ディレクトリ構造
 
