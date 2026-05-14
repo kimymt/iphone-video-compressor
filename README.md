@@ -105,7 +105,7 @@ mediabunny は現状 SharedArrayBuffer を要求しないため `public/_headers
 ## ディレクトリ構造
 
 ```
-movie-compresser/
+iphone-video-compressor/
 ├── public/
 │   └── icons/         # 192 / 512 / maskable / apple-touch-icon (ダミー)
 ├── src/
