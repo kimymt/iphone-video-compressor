@@ -269,11 +269,18 @@ iPhone 12+ で HDR 録画したユーザーが「画質を保ったまま圧縮�
 
 ---
 
-## V2.x: Eng Review (2026-05-15) で出た MINOR バックログ
+## ✅ V2.x: Eng Review (2026-05-15) で出た MINOR バックログ — 全 14 件完了
 
-`/cso` + retrospective engineering review (v0.9.1 → main 累積 12 PR レビュー) で見つかった改善余地。すべて optional ですが、機会あれば。
+`/cso` + retrospective engineering review (v0.9.1 → main 累積 12 PR レビュー) で見つかった改善余地。すべて 2026-05-15 中に対応完了:
 
-### i18n (高優先度)
+- **i18n 高優先 4 件**: PR #22 で対応 (commit `135ef75`)
+- **View Transitions 中優先 4 件**: PR #22 で対応 (commit `0425319`)
+- **SettingsSheet UX 中優先 4 件**: PR #23 で対応 (commit `24ab2a8`)
+- **Icons / Build 低優先 2 件**: PR #23 で対応 (commit `7f7f4c0`)
+
+各項目の元仕様は git history に残置 (本ファイルでは履歴のためそのまま記載)。
+
+### i18n (高優先度) ✅ 完了 (PR #22)
 
 1. **drift テストに placeholder set 比較を追加** ([src/i18n/index.test.tsx:285-296](src/i18n/index.test.tsx))
    現状: キー集合のみ runtime 一致を検証。`ja` で `'残り {duration}'` が翻訳ミスで他 locale で `'剩餘 {time}'` になっても TS も runtime test も通る。
@@ -291,7 +298,7 @@ iPhone 12+ で HDR 録画したユーザーが「画質を保ったまま圧縮�
    現状: `\{(\w+)\}` は `{0}` を許容する (ICU positional に紛らわしい)。
    対処: `[a-zA-Z]` 始まりに絞る or docs に「named only」と明記。
 
-### View Transitions (中優先度)
+### View Transitions (中優先度) ✅ 完了 (PR #22)
 
 5. **retry の VT 意味論を明確化** ([src/stores/queueStore.ts:289-305](src/stores/queueStore.ts), [src/components/QueueItem.tsx:121](src/components/QueueItem.tsx))
    現状: retry は同じ `id` を保つので `viewTransitionName: queue-item-${id}` が VT API では morph 扱いされ、`::view-transition-new(*):only-child` の slide-in は走らない。
@@ -310,7 +317,7 @@ iPhone 12+ で HDR 録画したユーザーが「画質を保ったまま圧縮�
    現状: root group は 0.3s、old/new は 0.2s で 100ms のズレ。視覚影響ほぼなし。
    対処: `::view-transition-group(root) { animation-duration: 0.2s }` 明示。
 
-### SettingsSheet UX (中優先度)
+### SettingsSheet UX (中優先度) ✅ 完了 (PR #23)
 
 9. **drag-to-dismiss target を header 全体に拡大** ([src/components/SettingsSheet.tsx:253-260](src/components/SettingsSheet.tsx))
    現状: 40×6px の小さい handle のみ。iOS native sheet は header 行全体を drag できる。
@@ -328,7 +335,7 @@ iPhone 12+ で HDR 録画したユーザーが「画質を保ったまま圧縮�
     現状: 4 箇所 (init / setPreset / dismissCameraTip / setLanguage) で同じ 3-field literal を repeat。新 field 追加時にずれる risk。
     対処: `currentPersisted()` helper を抽出。
 
-### Icons / Build (低優先度)
+### Icons / Build (低優先度) ✅ 完了 (PR #23)
 
 13. **`generate-icons.mjs` の SVG width 正規表現を DOM mutation に置換** ([scripts/generate-icons.mjs:30-32](scripts/generate-icons.mjs))
     現状: `svg.replace(/width="\d+"/, ...)`。SVG が `width="100%"` や属性順変更で silently 破綻。
