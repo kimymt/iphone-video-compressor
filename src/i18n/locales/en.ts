@@ -103,7 +103,7 @@ export const en: Messages = {
     versionLabel: 'v{version}',
     sourceLink: 'Source code (GitHub)',
     language: {
-      auto: 'Automatic (follow device setting)',
+      auto: 'Automatic (currently: {current})',
       ja: '日本語',
       en: 'English',
       'zh-CN': '简体中文',

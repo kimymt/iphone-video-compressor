@@ -104,7 +104,7 @@ export const ko: Messages = {
     versionLabel: 'v{version}',
     sourceLink: '소스 코드 (GitHub)',
     language: {
-      auto: '자동 (기기 설정 따라가기)',
+      auto: '자동 (현재: {current})',
       ja: '日本語',
       en: 'English',
       'zh-CN': '简体中文',

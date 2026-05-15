@@ -105,7 +105,7 @@ export const zhTW: Messages = {
     versionLabel: 'v{version}',
     sourceLink: '原始碼 (GitHub)',
     language: {
-      auto: '自動 (依裝置設定)',
+      auto: '自動 (目前: {current})',
       ja: '日本語',
       en: 'English',
       'zh-CN': '简体中文',
