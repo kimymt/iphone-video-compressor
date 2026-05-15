@@ -18,60 +18,103 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('detectLocale', () => {
-  it('navigator.language が ja-* なら ja', () => {
-    Object.defineProperty(navigator, 'language', { value: 'ja-JP', configurable: true });
+/** テストヘルパ: navigator.languages を上書きして単一言語をシミュレート。
+ *  jsdom default の `['en-US']` が誤って先に match するのを防ぐ。 */
+function setLanguages(...langs: string[]): void {
+  Object.defineProperty(navigator, 'languages', { value: langs, configurable: true });
+  Object.defineProperty(navigator, 'language', { value: langs[0] ?? '', configurable: true });
+}
+
+describe('detectLocale (single language)', () => {
+  it('ja-* なら ja', () => {
+    setLanguages('ja-JP');
     expect(detectLocale()).toBe('ja');
   });
 
-  it('navigator.language が en-US なら en', () => {
-    Object.defineProperty(navigator, 'language', { value: 'en-US', configurable: true });
+  it('en-US なら en', () => {
+    setLanguages('en-US');
     expect(detectLocale()).toBe('en');
   });
 
-  it('navigator.language が ko-KR なら ko', () => {
-    Object.defineProperty(navigator, 'language', { value: 'ko-KR', configurable: true });
+  it('ko-KR なら ko', () => {
+    setLanguages('ko-KR');
     expect(detectLocale()).toBe('ko');
   });
 
-  it('navigator.language が zh-CN なら zh-CN (簡体)', () => {
-    Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true });
+  it('zh-CN なら zh-CN (簡体)', () => {
+    setLanguages('zh-CN');
     expect(detectLocale()).toBe('zh-CN');
   });
 
-  it('navigator.language が zh-Hans-* なら zh-CN', () => {
-    Object.defineProperty(navigator, 'language', { value: 'zh-Hans-CN', configurable: true });
+  it('zh-Hans-* なら zh-CN', () => {
+    setLanguages('zh-Hans-CN');
     expect(detectLocale()).toBe('zh-CN');
   });
 
-  it('navigator.language が zh-TW なら zh-TW (繁体)', () => {
-    Object.defineProperty(navigator, 'language', { value: 'zh-TW', configurable: true });
+  it('zh-TW なら zh-TW (繁体)', () => {
+    setLanguages('zh-TW');
     expect(detectLocale()).toBe('zh-TW');
   });
 
-  it('navigator.language が zh-HK なら zh-TW (香港 → 繁体)', () => {
-    Object.defineProperty(navigator, 'language', { value: 'zh-HK', configurable: true });
+  it('zh-HK なら zh-TW (香港 → 繁体)', () => {
+    setLanguages('zh-HK');
     expect(detectLocale()).toBe('zh-TW');
   });
 
-  it('navigator.language が zh-Hant-* なら zh-TW', () => {
-    Object.defineProperty(navigator, 'language', { value: 'zh-Hant-TW', configurable: true });
+  it('zh-Hant-* なら zh-TW', () => {
+    setLanguages('zh-Hant-TW');
     expect(detectLocale()).toBe('zh-TW');
   });
 
-  it('navigator.language が zh (region なし) なら zh-CN default', () => {
-    Object.defineProperty(navigator, 'language', { value: 'zh', configurable: true });
+  it('zh (region なし) なら zh-CN default', () => {
+    setLanguages('zh');
     expect(detectLocale()).toBe('zh-CN');
   });
 
-  it('navigator.language が fr-FR なら en fallback', () => {
-    Object.defineProperty(navigator, 'language', { value: 'fr-FR', configurable: true });
+  it('fr-FR なら en fallback', () => {
+    setLanguages('fr-FR');
     expect(detectLocale()).toBe('en');
   });
 
-  it('navigator.language が空でも en にフォールバック', () => {
+  it('navigator.language も navigator.languages も空でも en fallback', () => {
+    Object.defineProperty(navigator, 'languages', { value: [], configurable: true });
     Object.defineProperty(navigator, 'language', { value: '', configurable: true });
     expect(detectLocale()).toBe('en');
+  });
+});
+
+describe('detectLocale (multi-language preference: navigator.languages[])', () => {
+  // V2.x MINOR #2: iOS の言語と地域設定で複数言語を順序付けて並べているユーザを
+  // 取りこぼさないよう、navigator.languages[] を順次マッチする。
+  // navigator.language (単一) のみだったときは「先頭の OS 優先言語」しか見れず、
+  // 例えば ['de', 'en', 'ja'] のユーザは 'de' が未対応な瞬間 'en' fallback だった。
+
+  it('最初の対応 candidate を返す: [ja, en] → ja', () => {
+    setLanguages('ja-JP', 'en-US');
+    expect(detectLocale()).toBe('ja');
+  });
+
+  it('未対応 candidate は skip: [de, en, ja] → en (ユーザは de を最優先、次に en を ja より上位に置いている)', () => {
+    setLanguages('de-DE', 'en-US', 'ja-JP');
+    expect(detectLocale()).toBe('en');
+  });
+
+  it('未対応のみ: [de, fr] → en fallback', () => {
+    setLanguages('de-DE', 'fr-FR');
+    expect(detectLocale()).toBe('en');
+  });
+
+  it('中国語の繁体 / 簡体は順序順に正しく分類: [zh-TW, ja] → zh-TW', () => {
+    setLanguages('zh-TW', 'ja-JP');
+    expect(detectLocale()).toBe('zh-TW');
+  });
+
+  it('navigator.languages が undefined のときは navigator.language に fallback', () => {
+    // navigator.languages を未定義にして navigator.language のみで動くか確認
+    // (古い browser / 非標準環境のシミュレーション)
+    Object.defineProperty(navigator, 'languages', { value: undefined, configurable: true });
+    Object.defineProperty(navigator, 'language', { value: 'ko-KR', configurable: true });
+    expect(detectLocale()).toBe('ko');
   });
 });
 
@@ -85,8 +128,10 @@ describe('resolveLocale', () => {
   });
 
   it("'auto' は detectLocale() の結果", () => {
+    Object.defineProperty(navigator, 'languages', { value: ['ja-JP'], configurable: true });
     Object.defineProperty(navigator, 'language', { value: 'ja-JP', configurable: true });
     expect(resolveLocale('auto')).toBe('ja');
+    Object.defineProperty(navigator, 'languages', { value: ['fr-FR'], configurable: true });
     Object.defineProperty(navigator, 'language', { value: 'fr-FR', configurable: true });
     expect(resolveLocale('auto')).toBe('en');
   });
@@ -222,7 +267,9 @@ describe('Provider + t()', () => {
     expect(screen.getByTestId('title').textContent).toBe('Video Compressor');
   });
 
-  it("preference='auto' の場合 navigator.language で解決", () => {
+  it("preference='auto' の場合 navigator.languages で解決", () => {
+    // V2.x: navigator.languages[] を優先するようになった (#2)
+    Object.defineProperty(navigator, 'languages', { value: ['ja-JP'], configurable: true });
     Object.defineProperty(navigator, 'language', { value: 'ja-JP', configurable: true });
     render(
       <I18nProvider initialPreference="auto">
@@ -356,6 +403,79 @@ describe('Messages 型整合性 (全 locale)', () => {
       expect(msgs.status.queued.length).toBeGreaterThan(0);
       expect(msgs.preset['standard-hevc'].label.length).toBeGreaterThan(0);
     }
+  });
+
+  /** 値からプレースホルダ名のセットを抽出。`{var}` 形式 (named only)。 */
+  function extractPlaceholders(value: string): Set<string> {
+    const names = new Set<string>();
+    const re = /\{([a-zA-Z][a-zA-Z0-9_]*)\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(value)) !== null) {
+      if (match[1] !== undefined) names.add(match[1]);
+    }
+    return names;
+  }
+
+  /** 巾乱対称差: 2 つのセットが完全一致しないとき、両方のセットを返す。 */
+  function symmetricDiff<T>(a: Set<T>, b: Set<T>): { onlyInA: T[]; onlyInB: T[] } {
+    const onlyInA = [...a].filter((x) => !b.has(x));
+    const onlyInB = [...b].filter((x) => !a.has(x));
+    return { onlyInA, onlyInB };
+  }
+
+  it('全 locale で同一キーの placeholder 集合が一致する (翻訳ミスを CI で検出)', async () => {
+    // V2.x: キー集合の drift は前段のテストで検出できるが、placeholder の drift
+    // (例: ja で `'残り {duration}'`、zh-TW で `'剩餘 {time}'`) はキー一致だけ
+    // ではすり抜けてしまう。各キーの value から `{name}` を抽出して set 比較する。
+    const ja = (await import('./locales/ja')).ja;
+    const locales = {
+      en: (await import('./locales/en')).en,
+      'zh-CN': (await import('./locales/zh-CN')).zhCN,
+      'zh-TW': (await import('./locales/zh-TW')).zhTW,
+      ko: (await import('./locales/ko')).ko,
+    } as const;
+
+    // 全 leaf キーを ja から列挙し、各 locale の同キー value と placeholder set を比較
+    type AnyMessages = Record<string, unknown>;
+    function walk(prefix: string, jaObj: AnyMessages, others: Record<string, AnyMessages>): void {
+      for (const [k, jaVal] of Object.entries(jaObj)) {
+        const path = prefix ? `${prefix}.${k}` : k;
+        if (typeof jaVal === 'string') {
+          const jaPh = extractPlaceholders(jaVal);
+          for (const [localeName, otherObj] of Object.entries(others)) {
+            const otherVal = otherObj[k];
+            // キー drift は前段で検出済みなので、ここは undefined を許容しない
+            expect(
+              typeof otherVal,
+              `[${localeName}] expected string at ${path}, got ${typeof otherVal}`,
+            ).toBe('string');
+            const otherPh = extractPlaceholders(otherVal as string);
+            // 集合の対称差を取り、空でなければ詳細エラー文を出す
+            const diff = symmetricDiff(jaPh, otherPh);
+            if (diff.onlyInA.length > 0 || diff.onlyInB.length > 0) {
+              throw new Error(
+                `Placeholder drift at "${path}" (${localeName}): ` +
+                  `ja=[${[...jaPh].join(',')}] vs ${localeName}=[${[...otherPh].join(',')}] ` +
+                  `(only_in_ja=[${diff.onlyInA.join(',')}], only_in_${localeName}=[${diff.onlyInB.join(',')}])`,
+              );
+            }
+          }
+        } else if (jaVal !== null && typeof jaVal === 'object') {
+          const nestedOthers: Record<string, AnyMessages> = {};
+          for (const [localeName, otherObj] of Object.entries(others)) {
+            const nested = otherObj[k];
+            expect(
+              typeof nested,
+              `[${localeName}] expected nested object at ${path}, got ${typeof nested}`,
+            ).toBe('object');
+            nestedOthers[localeName] = nested as AnyMessages;
+          }
+          walk(path, jaVal as AnyMessages, nestedOthers);
+        }
+      }
+    }
+
+    walk('', ja as unknown as AnyMessages, locales as unknown as Record<string, AnyMessages>);
   });
 });
 

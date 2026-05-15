@@ -305,7 +305,17 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       status: 'queued',
     };
 
-    // V2: View Transitions API で retry の status 切替を smooth に。
+    // V2 / V2.x MINOR #5: View Transitions の意味論を明示。
+    //
+    // retry は同じ `id` を保つので `viewTransitionName: queue-item-${id}-${addedAt}`
+    // 経由で **per-item morph** が走る (status icon が AlertTriangle → Clock に
+    // smooth に切り替わる)。CSS の `::view-transition-new(*):only-child` で定義した
+    // slide-in アニメは「old が存在しない新規追加」専用のため、retry では
+    // **意図的に走らない** (item は DOM 上に残ったまま morph するのが正しい挙動)。
+    //
+    // 「再投入感」を強く出したい場合は `addedAt` を update するか retryCount を
+    // 追加して viewTransitionName を bump すれば slide-out + slide-in が走るが、
+    // iOS native の retry UX に合わせて subtle morph のままにしている。
     await withViewTransition(() => {
       set((state) => ({
         items: state.items.map((i) => (i.id === id ? retried : i)),

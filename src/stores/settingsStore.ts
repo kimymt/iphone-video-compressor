@@ -14,7 +14,7 @@
 import { create } from 'zustand';
 import type { EnvCheck, PresetKey } from '../lib/types';
 import { defaultPresetKey, findPreset } from '../lib/presets';
-import type { LocalePreference } from '../i18n';
+import { isValidLocalePreference, type LocalePreference } from '../i18n';
 
 const STORAGE_KEY = 'iVC.settings.v1';
 
@@ -91,20 +91,10 @@ function isPresetAvailable(key: PresetKey, envCheck: EnvCheck): boolean {
 
 /** V2: 不明な language 値を 'auto' に正規化する。
  *  V2.x: zh-CN / zh-TW / ko を追加サポート。
- *  isValidLocalePreference を再利用すべきだが、型循環を避けるためここでは直書きする
- *  (i18n が settingsStore を import するわけではないので循環は発生しないが、保守上の独立性を優先)。 */
-function normalizeLanguage(v: LocalePreference | undefined): LocalePreference {
-  if (
-    v === 'auto' ||
-    v === 'ja' ||
-    v === 'en' ||
-    v === 'zh-CN' ||
-    v === 'zh-TW' ||
-    v === 'ko'
-  ) {
-    return v;
-  }
-  return 'auto';
+ *  i18n の単一の真実源 `isValidLocalePreference` を再利用する (旧実装は同じ列挙を別々に
+ *  管理していて Locale 追加のたびに 2 箇所同期が必要だった)。 */
+function normalizeLanguage(v: unknown): LocalePreference {
+  return isValidLocalePreference(v) ? v : 'auto';
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({

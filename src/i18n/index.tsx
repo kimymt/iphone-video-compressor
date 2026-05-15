@@ -51,32 +51,54 @@ export interface I18nContextValue {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 /**
- * navigator.language から対応 Locale を解決する。
- * BCP-47 / Unicode CLDR の prefix を見て分類:
+ * `navigator.languages[]` (BCP-47 順序付きユーザ言語優先リスト) を順に走査して、
+ * 最初にマッチした言語を対応 Locale に解決する。
+ *
+ * 例: iOS の言語と地域で `['de', 'en', 'ja']` の順に設定されているユーザは:
+ *   - 'de' は未対応 → skip
+ *   - 'en' は対応 → 'en' を返す (ja より en を優先する意図を尊重)
+ *
+ * 分類規則 (各 candidate に適用):
  *   - 'ja-*' → 'ja'
  *   - 'zh-Hans' / 'zh-CN' / 'zh-SG' / 'zh-MY' → 'zh-CN' (簡体)
  *   - 'zh-Hant' / 'zh-TW' / 'zh-HK' / 'zh-MO' → 'zh-TW' (繁体)
  *   - 'zh' のみ (region なし) → 'zh-CN' default
  *   - 'ko-*' → 'ko'
- *   - それ以外 → 'en' fallback
+ *   - 'en-*' → 'en'
+ *   - それ以外: 次の candidate へ
+ *
+ * すべて未マッチなら 'en' fallback。
+ * `navigator.languages` が空 / 未定義のときは `navigator.language` のみを candidates に使う。
  */
 export function detectLocale(): Locale {
-  if (typeof navigator === 'undefined' || !navigator.language) return 'en';
-  const lang = navigator.language.toLowerCase();
-  if (lang.startsWith('ja')) return 'ja';
-  if (lang.startsWith('ko')) return 'ko';
-  if (lang.startsWith('zh')) {
-    // Traditional Chinese 領域 / script
-    if (
-      lang.startsWith('zh-tw') ||
-      lang.startsWith('zh-hk') ||
-      lang.startsWith('zh-mo') ||
-      lang.includes('hant')
-    ) {
-      return 'zh-TW';
+  if (typeof navigator === 'undefined') return 'en';
+  const candidates: readonly string[] =
+    navigator.languages && navigator.languages.length > 0
+      ? navigator.languages
+      : navigator.language
+        ? [navigator.language]
+        : [];
+
+  for (const candidate of candidates) {
+    const lang = candidate.toLowerCase();
+    if (lang.startsWith('ja')) return 'ja';
+    if (lang.startsWith('ko')) return 'ko';
+    if (lang.startsWith('zh')) {
+      // Traditional Chinese 領域 / script
+      if (
+        lang.startsWith('zh-tw') ||
+        lang.startsWith('zh-hk') ||
+        lang.startsWith('zh-mo') ||
+        lang.includes('hant')
+      ) {
+        return 'zh-TW';
+      }
+      // Simplified Chinese (zh-CN / zh-SG / zh-MY / zh-Hans / zh のみ) を default に
+      return 'zh-CN';
     }
-    // Simplified Chinese (zh-CN / zh-SG / zh-MY / zh-Hans / zh のみ) を default に
-    return 'zh-CN';
+    // 'en-*' は明示的に match (fallback と区別: 'de' は未対応として次へ進む)
+    if (lang.startsWith('en')) return 'en';
+    // それ以外の言語 ('de', 'fr', ...) は match せず次の candidate へ
   }
   return 'en';
 }
@@ -97,10 +119,16 @@ function getMessage(messagesForLocale: Messages, path: string): string | undefin
   return typeof cursor === 'string' ? cursor : undefined;
 }
 
-/** `{var}` のプレースホルダを vars[var] で置換。未指定の var はリテラルのまま残す (debug 用)。 */
+/**
+ * `{var}` のプレースホルダを vars[var] で置換。未指定の var はリテラルのまま残す (debug 用)。
+ *
+ * placeholder は **named-only** ([a-zA-Z][a-zA-Z0-9_]* 形式)。
+ * `{0}` / `{1}` のような ICU positional 形式は受け付けない (混乱を避ける)。
+ * 翻訳者には `{size}` `{duration}` 等の意味のある名前を強制する。
+ */
 function interpolate(template: string, vars?: Record<string, string | number>): string {
   if (!vars) return template;
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => {
+  return template.replace(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g, (_, key: string) => {
     return key in vars ? String(vars[key]) : `{${key}}`;
   });
 }
