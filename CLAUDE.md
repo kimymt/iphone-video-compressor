@@ -1020,6 +1020,11 @@ mediabunny は新興ライブラリで iOS 26 Safari + HEVC mux の実績が乏�
 25. **iOS audio unlock**。FilePicker タップ時に無音 `<audio>` を `play().then(p => p.pause())`、`done.m4a` 再生時の制約を回避
 26. **EXIF / 位置情報破棄**。プライバシー観点で mediabunny mux 設定で metadata を含めない
 27. **apple-touch-icon は `<link>` で明示必要**。VitePWA の自動生成だけだと iOS が拾わない
+28. **iOS Safari の `AudioContext` は per-instance で unlock 状態を持つ**。`unlockAudio()` 用と `playDoneSound()` 用に別々の `AudioContext` を生成すると、後発の ctx は `resume()` しても `state === 'suspended'` のまま無音。モジュールスコープの `sharedCtx` を 1 個だけ持って unlock + chime で共有する（v0.9.1 の PR #2、`src/platform/audio.ts`）
+29. **iOS Safari の `change` イベントは transient user activation を持たない**。`<input type="file">` の `change` ハンドラで `navigator.wakeLock.request('screen')` を呼ぶと `NotAllowedError`。`click` ハンドラの冒頭（`await` を挟む前）で同期で `void wakeLockManager.acquire()` を発火させる必要がある（v0.9.1 の PR #4、`src/components/FilePicker.tsx`）
+30. **Wake Lock 失敗時は診断情報を UI に出すこと**。「画面 ON 失敗」だけだと `NotAllowedError` か `NotSupportedError` か区別不能で原因究明できない。`WakeLockManager.lastError` を公開し、Indicator に inline 表示 + `data-error-name` 属性 + `title` 属性 + `aria-label` で読めるようにする（v0.9.1 の PR #3、`src/components/WakeLockIndicator.tsx`）
+31. **file picker キャンセル時に `change` が発火しないので Wake Lock が leak する**。`click` で acquire した後にユーザがキャンセルすると `change` イベントは飛ばず、画面 ON のまま残り続ける。60 秒タイマーで `release()` する fallback を入れる（v0.9.1 の PR #4、`src/components/FilePicker.tsx`）
+32. **iPhone 側面の Ring/Silent スイッチが Silent だと WebAudio は完全無音**。`AVAudioSession.category = 'ambient'` の仕様で、Web 側から override する API は存在しない。アプリ側ではトラブルシュート文言（Ring に倒して音量を上げる）を README / UI に出すしかない
 
 ---
 
