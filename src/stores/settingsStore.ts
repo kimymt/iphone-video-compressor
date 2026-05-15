@@ -89,9 +89,21 @@ function isPresetAvailable(key: PresetKey, envCheck: EnvCheck): boolean {
   return true;
 }
 
-/** V2: 不明な language 値を 'auto' に正規化する。 */
+/** V2: 不明な language 値を 'auto' に正規化する。
+ *  V2.x: zh-CN / zh-TW / ko を追加サポート。
+ *  isValidLocalePreference を再利用すべきだが、型循環を避けるためここでは直書きする
+ *  (i18n が settingsStore を import するわけではないので循環は発生しないが、保守上の独立性を優先)。 */
 function normalizeLanguage(v: LocalePreference | undefined): LocalePreference {
-  if (v === 'auto' || v === 'ja' || v === 'en') return v;
+  if (
+    v === 'auto' ||
+    v === 'ja' ||
+    v === 'en' ||
+    v === 'zh-CN' ||
+    v === 'zh-TW' ||
+    v === 'ko'
+  ) {
+    return v;
+  }
   return 'auto';
 }
 

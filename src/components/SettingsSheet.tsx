@@ -209,11 +209,15 @@ export default function SettingsSheet({
   const storagePct =
     storage && storage.quota > 0 ? Math.min(100, (storage.usage / storage.quota) * 100) : 0;
 
-  // 言語ピッカーのオプション (auto は表記を併記、ja/en は当該言語表記)
+  // 言語ピッカーのオプション。
+  // auto はその時点の locale で「自動」と表記、各言語ラベルは native script (日本語 / English / 简体中文 / 繁體中文 / 한국어)。
   const languageOptions: ReadonlyArray<{ value: LocalePreference; label: string }> = [
     { value: 'auto', label: t('settings.language.auto') },
     { value: 'ja', label: t('settings.language.ja') },
     { value: 'en', label: t('settings.language.en') },
+    { value: 'zh-CN', label: t('settings.language.zh-CN') },
+    { value: 'zh-TW', label: t('settings.language.zh-TW') },
+    { value: 'ko', label: t('settings.language.ko') },
   ];
 
   return (

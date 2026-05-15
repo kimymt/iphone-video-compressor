@@ -108,6 +108,9 @@ export const ja = {
       auto: '自動 (デバイス設定に従う)',
       ja: '日本語',
       en: 'English',
+      'zh-CN': '简体中文',
+      'zh-TW': '繁體中文',
+      ko: '한국어',
     },
   },
 
