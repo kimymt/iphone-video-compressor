@@ -144,30 +144,35 @@ export default function App() {
   const activePreset = settingsPreset ?? defaultPresetKey(envCheck);
 
   return (
-    <main className="app flex min-h-dvh flex-col bg-[var(--bg)] text-[var(--label)]">
+    <main className="app min-h-dvh bg-[var(--bg)] text-[var(--label)]">
       <ToastStack />
 
-      <header className="flex items-center justify-between gap-3 px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
-        <h1 className="title text-3xl font-bold">動画圧縮</h1>
-        <div className="flex items-center gap-2">
-          <WakeLockIndicator />
-          <button
-            type="button"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="設定を開く"
-            data-testid="open-settings"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--label)] transition-opacity active:opacity-60"
-          >
-            <SettingsIcon aria-hidden="true" size={22} />
-          </button>
+      {/* CLAUDE.md「UI 仕様 > レスポンシブ」: コンテンツは max-width 393px (iPhone 標準) で
+          中央寄せ。Pro Max (430px) や desktop / iPad で full-width に広がらないようにする。
+          SettingsSheet は fixed なのでこのコンテナの外。 */}
+      <div className="mx-auto flex min-h-dvh w-full max-w-[393px] flex-col">
+        <header className="flex items-center justify-between gap-3 px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
+          <h1 className="title text-3xl font-bold">動画圧縮</h1>
+          <div className="flex items-center gap-2">
+            <WakeLockIndicator />
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="設定を開く"
+              data-testid="open-settings"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--label)] transition-opacity active:opacity-60"
+            >
+              <SettingsIcon aria-hidden="true" size={22} />
+            </button>
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-4 pb-4">
+          <QueueList items={items} />
         </div>
-      </header>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
-        <QueueList items={items} />
+        <FilePicker preset={activePreset} onResult={handleAddResult} />
       </div>
-
-      <FilePicker preset={activePreset} onResult={handleAddResult} />
 
       <SettingsSheet
         open={settingsOpen}
