@@ -105,7 +105,7 @@ export const ja = {
     versionLabel: 'v{version}',
     sourceLink: 'ソースコード (GitHub)',
     language: {
-      auto: '自動 (デバイス設定に従う)',
+      auto: '自動 (現在: {current})',
       ja: '日本語',
       en: 'English',
       'zh-CN': '简体中文',

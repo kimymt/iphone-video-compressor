@@ -105,7 +105,7 @@ export const zhCN: Messages = {
     versionLabel: 'v{version}',
     sourceLink: '源代码 (GitHub)',
     language: {
-      auto: '自动 (跟随设备设置)',
+      auto: '自动 (当前: {current})',
       ja: '日本語',
       en: 'English',
       'zh-CN': '简体中文',

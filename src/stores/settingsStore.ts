@@ -97,6 +97,17 @@ function normalizeLanguage(v: unknown): LocalePreference {
   return isValidLocalePreference(v) ? v : 'auto';
 }
 
+/** V2.x MINOR #4: 現在の state を localStorage 形式に変換する helper。
+ *  旧実装は 4 箇所 (init / setPreset / dismissCameraTip / setLanguage) で
+ *  同じ 3-field literal を repeat していて、新 field 追加時にずれる risk があった。 */
+function currentPersisted(state: Pick<SettingsState, 'preset' | 'cameraTipDismissed' | 'language'>): PersistedSettings {
+  return {
+    preset: state.preset ?? undefined,
+    cameraTipDismissed: state.cameraTipDismissed,
+    language: state.language,
+  };
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   preset: null,
   cameraTipDismissed: false,
@@ -124,40 +135,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
     // 復元値がデフォルトに差し替わった場合は localStorage も最新値に揃える
     if (stored.preset !== preset || stored.language !== language) {
-      safeWriteStorage({
+      safeWriteStorage(currentPersisted({
         preset,
         cameraTipDismissed: stored.cameraTipDismissed === true,
         language,
-      });
+      }));
     }
   },
 
   setPreset(key) {
     set({ preset: key });
-    safeWriteStorage({
-      preset: key,
-      cameraTipDismissed: get().cameraTipDismissed,
-      language: get().language,
-    });
+    safeWriteStorage(currentPersisted(get()));
   },
 
   dismissCameraTip() {
     set({ cameraTipDismissed: true });
-    safeWriteStorage({
-      preset: get().preset ?? undefined,
-      cameraTipDismissed: true,
-      language: get().language,
-    });
+    safeWriteStorage(currentPersisted(get()));
   },
 
   setLanguage(lang) {
     const normalized = normalizeLanguage(lang);
     set({ language: normalized });
-    safeWriteStorage({
-      preset: get().preset ?? undefined,
-      cameraTipDismissed: get().cameraTipDismissed,
-      language: normalized,
-    });
+    safeWriteStorage(currentPersisted(get()));
   },
 }));
 

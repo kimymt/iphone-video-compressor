@@ -25,7 +25,7 @@ import type { EnvCheck, PresetKey } from '../lib/types';
 import { getAvailablePresets } from '../lib/presets';
 import { getStorageInfo, type StorageInfo } from '../platform/storage';
 import { useSettingsStore } from '../stores/settingsStore';
-import { useT } from '../i18n';
+import { useT, useI18n } from '../i18n';
 import type { LocalePreference } from '../i18n';
 import { formatBytes } from '../lib/format';
 
@@ -35,6 +35,11 @@ const DRAG_DISMISS_VELOCITY_PX_MS = 0.5;
  * これより小さいドラッグは、たとえ velocity が高くても無視する。
  * jsdom のテストで touch event 間の時間差が 0 になるケースで誤発火を防ぐ目的もある。 */
 const DRAG_VELOCITY_MIN_DELTA_PX = 40;
+/** V2.x MINOR #1: drag を「実 drag」として扱う最小 delta (px)。
+ * header 行 (close ボタン含む) もタッチイベントを受けるよう拡大したため、
+ * close ボタンタップでの「微小な指の揺れ (0-7px)」を drag と誤解釈しない閾値。
+ * これより小さい間は dragDeltaY を 0 のまま維持する。 */
+const DRAG_START_THRESHOLD_PX = 8;
 /** open=false でも DOM を残してアニメ完了させるための余韻 (ms)。 */
 const CLOSE_ANIMATION_MS = 350;
 
@@ -75,6 +80,7 @@ export default function SettingsSheet({
   const setLanguage = useSettingsStore((s) => s.setLanguage);
 
   const t = useT();
+  const { locale: currentLocale } = useI18n();
   const presets = useMemo(() => getAvailablePresets(envCheck), [envCheck]);
 
   const [storage, setStorage] = useState<StorageInfo | null>(null);
@@ -228,6 +234,13 @@ export default function SettingsSheet({
     if (!touch) return;
     const now = performance.now();
     const delta = touch.clientY - dragStartRef.current.y;
+    // V2.x MINOR #1: drag は 8px 以上動いてから初めて panel を追随させる。
+    // header 全体をタッチ受け面にしたので、close ボタンタップ時の微小な
+    // 指揺れ (0-7px) を drag と誤解釈しないため。
+    if (Math.abs(delta) < DRAG_START_THRESHOLD_PX) {
+      dragLastRef.current = { y: touch.clientY, t: now };
+      return;
+    }
     // 下方向のみ反映 (上方向は無視、上に引っ張られても 0 から動かない)
     setDragDeltaY(Math.max(0, delta));
     dragLastRef.current = { y: touch.clientY, t: now };
@@ -276,10 +289,23 @@ export default function SettingsSheet({
   const storagePct =
     storage && storage.quota > 0 ? Math.min(100, (storage.usage / storage.quota) * 100) : 0;
 
+  // V2.x MINOR #3: storage bar 色を使用率で変化させる (iOS Settings → iPhone Storage
+  // と同じセマンティクス: 通常→警告→危険)。
+  // >95%: error (赤), >80%: warning (橙), else: accent (青)
+  const storageBarColor =
+    storagePct > 95
+      ? 'bg-[var(--error)]'
+      : storagePct > 80
+        ? 'bg-[var(--warning)]'
+        : 'bg-[var(--accent)]';
+
   // 言語ピッカーのオプション。
-  // auto はその時点の locale で「自動」と表記、各言語ラベルは native script (日本語 / English / 简体中文 / 繁體中文 / 한국어)。
+  // V2.x MINOR #2: auto の場合は「{current} を使用中」のように現在解決された
+  // locale の native name を表示する (`navigator.languages[]` で何が選ばれたか
+  // ユーザに見せる)。他の言語ラベルは native script 表記。
+  const currentNativeName = t(`settings.language.${currentLocale}`);
   const languageOptions: ReadonlyArray<{ value: LocalePreference; label: string }> = [
-    { value: 'auto', label: t('settings.language.auto') },
+    { value: 'auto', label: t('settings.language.auto', { current: currentNativeName }) },
     { value: 'ja', label: t('settings.language.ja') },
     { value: 'en', label: t('settings.language.en') },
     { value: 'zh-CN', label: t('settings.language.zh-CN') },
@@ -316,36 +342,42 @@ export default function SettingsSheet({
         className="glass-panel relative mx-auto flex max-h-[85vh] w-full max-w-[480px] flex-col overflow-hidden rounded-t-3xl pb-[max(env(safe-area-inset-bottom),16px)] text-[var(--label)] shadow-2xl"
         style={panelStyle}
       >
-        {/* Drag handle area (タッチイベントを受ける) */}
+        {/* V2.x MINOR #1: drag target を handle + header 全体に拡大。
+         *  旧実装は handle のみ (40×6px) でタップ精度がシビアだった。iOS native
+         *  sheet は header 行全体を drag できるパターンが標準。
+         *  touchmove は DRAG_START_THRESHOLD_PX で 8px 未満を無視するので、
+         *  close ボタンのタップは下記同パターンで誤発火しない。 */}
         <div
           data-testid="settings-sheet-handle"
-          className="flex flex-col items-center pb-2 pt-3"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
         >
-          <span
-            aria-hidden="true"
-            className="block h-1.5 w-10 rounded-full bg-[var(--label-tertiary)]"
-          />
-        </div>
+          {/* Visible handle (40×6px の "つまみ") */}
+          <div className="flex flex-col items-center pb-2 pt-3">
+            <span
+              aria-hidden="true"
+              className="block h-1.5 w-10 rounded-full bg-[var(--label-tertiary)]"
+            />
+          </div>
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 pb-3">
-          <h2 id="settings-sheet-title" className="title flex items-center gap-2 text-xl font-bold">
-            <Settings aria-hidden="true" size={20} />
-            {t('settings.title')}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={t('settings.closeAria')}
-            data-testid="settings-sheet-close"
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--label-secondary)] transition-opacity active:opacity-60"
-          >
-            <X aria-hidden="true" size={20} />
-          </button>
+          {/* Header (drag 可能領域に含める) */}
+          <div className="flex items-center justify-between px-5 pb-3">
+            <h2 id="settings-sheet-title" className="title flex items-center gap-2 text-xl font-bold">
+              <Settings aria-hidden="true" size={20} />
+              {t('settings.title')}
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t('settings.closeAria')}
+              data-testid="settings-sheet-close"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--label-secondary)] transition-opacity active:opacity-60"
+            >
+              <X aria-hidden="true" size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Content (scrollable) */}
@@ -455,7 +487,8 @@ export default function SettingsSheet({
                 data-testid="settings-storage-bar"
               >
                 <div
-                  className="h-full bg-[var(--accent)]"
+                  className={`h-full transition-colors ${storageBarColor}`}
+                  data-testid="settings-storage-bar-fill"
                   style={{ width: `${storagePct}%` }}
                 />
               </div>
