@@ -42,3 +42,6 @@ public/sw.js
 public/workbox-*.js
 public/registerSW.js
 .gstack/
+
+# Claude Code agent local settings (per-user, must not be committed)
+.claude/settings.local.json
