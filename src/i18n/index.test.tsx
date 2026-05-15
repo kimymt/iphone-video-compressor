@@ -29,8 +29,43 @@ describe('detectLocale', () => {
     expect(detectLocale()).toBe('en');
   });
 
-  it('navigator.language が zh-CN なら fallback で en', () => {
+  it('navigator.language が ko-KR なら ko', () => {
+    Object.defineProperty(navigator, 'language', { value: 'ko-KR', configurable: true });
+    expect(detectLocale()).toBe('ko');
+  });
+
+  it('navigator.language が zh-CN なら zh-CN (簡体)', () => {
     Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true });
+    expect(detectLocale()).toBe('zh-CN');
+  });
+
+  it('navigator.language が zh-Hans-* なら zh-CN', () => {
+    Object.defineProperty(navigator, 'language', { value: 'zh-Hans-CN', configurable: true });
+    expect(detectLocale()).toBe('zh-CN');
+  });
+
+  it('navigator.language が zh-TW なら zh-TW (繁体)', () => {
+    Object.defineProperty(navigator, 'language', { value: 'zh-TW', configurable: true });
+    expect(detectLocale()).toBe('zh-TW');
+  });
+
+  it('navigator.language が zh-HK なら zh-TW (香港 → 繁体)', () => {
+    Object.defineProperty(navigator, 'language', { value: 'zh-HK', configurable: true });
+    expect(detectLocale()).toBe('zh-TW');
+  });
+
+  it('navigator.language が zh-Hant-* なら zh-TW', () => {
+    Object.defineProperty(navigator, 'language', { value: 'zh-Hant-TW', configurable: true });
+    expect(detectLocale()).toBe('zh-TW');
+  });
+
+  it('navigator.language が zh (region なし) なら zh-CN default', () => {
+    Object.defineProperty(navigator, 'language', { value: 'zh', configurable: true });
+    expect(detectLocale()).toBe('zh-CN');
+  });
+
+  it('navigator.language が fr-FR なら en fallback', () => {
+    Object.defineProperty(navigator, 'language', { value: 'fr-FR', configurable: true });
     expect(detectLocale()).toBe('en');
   });
 
@@ -235,24 +270,61 @@ describe('Provider + t()', () => {
   });
 });
 
-describe('Messages 型整合性', () => {
-  it("en.ts は Messages 型を満たす (TS の satisfies で build 時に保証されているはずだが runtime も確認)", async () => {
-    const ja = await import('./locales/ja');
-    const en = await import('./locales/en');
-    // ja のキー集合と en のキー集合が一致することを確認 (深いキーも見る)
-    function flatten(obj: unknown, prefix = ''): string[] {
-      if (obj === null || typeof obj !== 'object') return [prefix];
-      const out: string[] = [];
-      for (const [k, v] of Object.entries(obj)) {
-        const key = prefix ? `${prefix}.${k}` : k;
-        if (v !== null && typeof v === 'object') out.push(...flatten(v, key));
-        else out.push(key);
-      }
-      return out;
+describe('Messages 型整合性 (全 locale)', () => {
+  function flatten(obj: unknown, prefix = ''): string[] {
+    if (obj === null || typeof obj !== 'object') return [prefix];
+    const out: string[] = [];
+    for (const [k, v] of Object.entries(obj)) {
+      const key = prefix ? `${prefix}.${k}` : k;
+      if (v !== null && typeof v === 'object') out.push(...flatten(v, key));
+      else out.push(key);
     }
-    const jaKeys = flatten(ja.ja).sort();
-    const enKeys = flatten(en.en).sort();
-    expect(enKeys).toEqual(jaKeys);
+    return out;
+  }
+
+  it('en / zh-CN / zh-TW / ko のキー集合が ja と一致 (TS satisfies の runtime 確認)', async () => {
+    const ja = (await import('./locales/ja')).ja;
+    const en = (await import('./locales/en')).en;
+    const zhCN = (await import('./locales/zh-CN')).zhCN;
+    const zhTW = (await import('./locales/zh-TW')).zhTW;
+    const ko = (await import('./locales/ko')).ko;
+    const jaKeys = flatten(ja).sort();
+    expect(flatten(en).sort()).toEqual(jaKeys);
+    expect(flatten(zhCN).sort()).toEqual(jaKeys);
+    expect(flatten(zhTW).sort()).toEqual(jaKeys);
+    expect(flatten(ko).sort()).toEqual(jaKeys);
+  });
+
+  it('全 locale で app.title / status.queued / preset.standard-hevc.label が空文字でない', async () => {
+    const all = [
+      (await import('./locales/ja')).ja,
+      (await import('./locales/en')).en,
+      (await import('./locales/zh-CN')).zhCN,
+      (await import('./locales/zh-TW')).zhTW,
+      (await import('./locales/ko')).ko,
+    ];
+    for (const msgs of all) {
+      expect(msgs.app.title.length).toBeGreaterThan(0);
+      expect(msgs.status.queued.length).toBeGreaterThan(0);
+      expect(msgs.preset['standard-hevc'].label.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('Provider — 全 locale 切替', () => {
+  it.each<['ja' | 'en' | 'zh-CN' | 'zh-TW' | 'ko', string]>([
+    ['ja', '動画圧縮'],
+    ['en', 'Video Compressor'],
+    ['zh-CN', '视频压缩'],
+    ['zh-TW', '影片壓縮'],
+    ['ko', '동영상 압축'],
+  ])('preference=%s で app.title が "%s"', (preference, expected) => {
+    render(
+      <I18nProvider initialPreference={preference}>
+        <Probe paths={['app.title']} />
+      </I18nProvider>,
+    );
+    expect(screen.getByTestId('probe-app.title').textContent).toBe(expected);
   });
 });
 

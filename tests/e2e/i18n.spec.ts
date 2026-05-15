@@ -137,6 +137,57 @@ test('<html lang> が locale に追従', async ({ page }) => {
   expect(lang).toBe('en');
 });
 
+test('言語ピッカーに 6 オプション (auto / ja / en / zh-CN / zh-TW / ko)', async ({ page }) => {
+  await page.getByTestId('open-settings').click();
+  // 各 testid が存在する
+  await expect(page.getByTestId('settings-language-auto')).toBeVisible();
+  await expect(page.getByTestId('settings-language-ja')).toBeVisible();
+  await expect(page.getByTestId('settings-language-en')).toBeVisible();
+  await expect(page.getByTestId('settings-language-zh-CN')).toBeVisible();
+  await expect(page.getByTestId('settings-language-zh-TW')).toBeVisible();
+  await expect(page.getByTestId('settings-language-ko')).toBeVisible();
+});
+
+test('简体中文に切替 → UI が中文化', async ({ page }) => {
+  await page.getByTestId('open-settings').click();
+  await page.getByTestId('settings-language-zh-CN').click();
+  await expect(page.getByTestId('settings-language-zh-CN')).toHaveAttribute('aria-checked', 'true');
+  // SettingsSheet 内が中国語化
+  await expect(page.getByRole('heading', { name: '设置', level: 2 })).toBeVisible();
+  await page.getByTestId('settings-sheet-close').click();
+  // メイン UI も中国語化
+  await expect(page.getByRole('heading', { name: '视频压缩', level: 1 })).toBeVisible();
+  await expect(page.getByText('暂无内容')).toBeVisible();
+  await expect(page.getByRole('button', { name: '选择视频' })).toBeVisible();
+  // ヘッダのサブタイトルも中国語
+  await expect(page.getByTestId('app-subtitle')).toHaveText('仅限 iOS 26+');
+  // <html lang>
+  const lang = await page.evaluate(() => document.documentElement.lang);
+  expect(lang).toBe('zh-CN');
+});
+
+test('繁體中文に切替 → UI が中文(繁体)化', async ({ page }) => {
+  await page.getByTestId('open-settings').click();
+  await page.getByTestId('settings-language-zh-TW').click();
+  await page.getByTestId('settings-sheet-close').click();
+  await expect(page.getByRole('heading', { name: '影片壓縮', level: 1 })).toBeVisible();
+  await expect(page.getByText('尚無內容')).toBeVisible();
+  await expect(page.getByTestId('app-subtitle')).toHaveText('僅限 iOS 26+');
+  const lang = await page.evaluate(() => document.documentElement.lang);
+  expect(lang).toBe('zh-TW');
+});
+
+test('한국어로 전환 → UI 가 한국어화', async ({ page }) => {
+  await page.getByTestId('open-settings').click();
+  await page.getByTestId('settings-language-ko').click();
+  await page.getByTestId('settings-sheet-close').click();
+  await expect(page.getByRole('heading', { name: '동영상 압축', level: 1 })).toBeVisible();
+  await expect(page.getByText('아직 항목이 없습니다')).toBeVisible();
+  await expect(page.getByTestId('app-subtitle')).toHaveText('iOS 26+ 전용');
+  const lang = await page.evaluate(() => document.documentElement.lang);
+  expect(lang).toBe('ko');
+});
+
 test('iOS 26+ 専用シグナル: ヘッダにサブタイトル + document.title 連動', async ({ page }) => {
   // 日本語モード: サブタイトル「iOS 26+ 専用」がヘッダに見える
   const subtitle = page.getByTestId('app-subtitle');

@@ -106,6 +106,9 @@ export const en: Messages = {
       auto: 'Automatic (follow device setting)',
       ja: '日本語',
       en: 'English',
+      'zh-CN': '简体中文',
+      'zh-TW': '繁體中文',
+      ko: '한국어',
     },
   },
 

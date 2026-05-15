@@ -10,12 +10,29 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ja, type Messages } from './locales/ja';
 import { en } from './locales/en';
+import { zhCN } from './locales/zh-CN';
+import { zhTW } from './locales/zh-TW';
+import { ko } from './locales/ko';
 
-export type Locale = 'ja' | 'en';
-/** 'auto' はユーザ選択値、実 locale 解決後は 'ja' | 'en' になる。 */
+export type Locale = 'ja' | 'en' | 'zh-CN' | 'zh-TW' | 'ko';
+/** 'auto' はユーザ選択値、実 locale 解決後は具体的な Locale になる。 */
 export type LocalePreference = Locale | 'auto';
 
-const messages: Record<Locale, Messages> = { ja, en };
+const messages: Record<Locale, Messages> = {
+  ja,
+  en,
+  'zh-CN': zhCN,
+  'zh-TW': zhTW,
+  ko,
+};
+
+/** localStorage / settingsStore の文字列値を Locale | LocalePreference に正規化する。 */
+export function isValidLocale(v: unknown): v is Locale {
+  return v === 'ja' || v === 'en' || v === 'zh-CN' || v === 'zh-TW' || v === 'ko';
+}
+export function isValidLocalePreference(v: unknown): v is LocalePreference {
+  return v === 'auto' || isValidLocale(v);
+}
 
 export interface I18nContextValue {
   /** 解決後の現在ロケール ('ja' | 'en')。 */
@@ -33,10 +50,35 @@ export interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-/** navigator.language を見て 'ja' or 'en' を返す。'ja' から始まれば 'ja'、それ以外は 'en'。 */
+/**
+ * navigator.language から対応 Locale を解決する。
+ * BCP-47 / Unicode CLDR の prefix を見て分類:
+ *   - 'ja-*' → 'ja'
+ *   - 'zh-Hans' / 'zh-CN' / 'zh-SG' / 'zh-MY' → 'zh-CN' (簡体)
+ *   - 'zh-Hant' / 'zh-TW' / 'zh-HK' / 'zh-MO' → 'zh-TW' (繁体)
+ *   - 'zh' のみ (region なし) → 'zh-CN' default
+ *   - 'ko-*' → 'ko'
+ *   - それ以外 → 'en' fallback
+ */
 export function detectLocale(): Locale {
   if (typeof navigator === 'undefined' || !navigator.language) return 'en';
-  return navigator.language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
+  const lang = navigator.language.toLowerCase();
+  if (lang.startsWith('ja')) return 'ja';
+  if (lang.startsWith('ko')) return 'ko';
+  if (lang.startsWith('zh')) {
+    // Traditional Chinese 領域 / script
+    if (
+      lang.startsWith('zh-tw') ||
+      lang.startsWith('zh-hk') ||
+      lang.startsWith('zh-mo') ||
+      lang.includes('hant')
+    ) {
+      return 'zh-TW';
+    }
+    // Simplified Chinese (zh-CN / zh-SG / zh-MY / zh-Hans / zh のみ) を default に
+    return 'zh-CN';
+  }
+  return 'en';
 }
 
 /** preference → 実 locale 解決 ('auto' なら navigator から検出)。 */
