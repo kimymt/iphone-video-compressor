@@ -26,16 +26,18 @@ const publicIcons = join(repoRoot, 'public', 'icons');
 const rounded = readFileSync(join(iconSrcDir, 'icon.svg'), 'utf-8');
 const maskable = readFileSync(join(iconSrcDir, 'icon-maskable.svg'), 'utf-8');
 
-// SVG の width/height 属性を 100% に置換 (viewBox はそのまま) して viewport にフィットさせる。
-function fitToViewport(svg) {
-  return svg.replace(/width="\d+"/, 'width="100%"').replace(/height="\d+"/, 'height="100%"');
-}
+// V2.x MINOR #5: SVG width/height は raw 文字列のまま渡し、page 内で DOM mutation
+// で viewport にフィットさせる。
+// 旧: `svg.replace(/width="\d+"/, ...)` は SVG が `width="100%"` / 属性順変更で
+//     silently 破綻する fragile な regex 依存だった。
+// 新: page で SVG を解釈してから DOM 属性を上書きするので、SVG の書き方に依存
+//     しない (viewBox さえ正しければレイアウトは決まる)。
 
 const targets = [
-  { size: 192, output: 'icon-192.png', svg: fitToViewport(rounded), label: 'rounded' },
-  { size: 512, output: 'icon-512.png', svg: fitToViewport(rounded), label: 'rounded' },
-  { size: 512, output: 'icon-maskable.png', svg: fitToViewport(maskable), label: 'maskable' },
-  { size: 180, output: 'apple-touch-icon.png', svg: fitToViewport(rounded), label: 'rounded' },
+  { size: 192, output: 'icon-192.png', svg: rounded, label: 'rounded' },
+  { size: 512, output: 'icon-512.png', svg: rounded, label: 'rounded' },
+  { size: 512, output: 'icon-maskable.png', svg: maskable, label: 'maskable' },
+  { size: 180, output: 'apple-touch-icon.png', svg: rounded, label: 'rounded' },
 ];
 
 const browser = await chromium.launch();
@@ -60,6 +62,17 @@ ${svg}
 </body>
 </html>`;
     await page.setContent(html);
+    // V2.x MINOR #5: page 内で SVG の width/height 属性を強制上書き (regex 依存を排除)。
+    // SVG の `width="1024"` でも `width="100%"` でも `width` 未指定でも、viewBox さえ
+    // 正しく定義されていれば 100vw × 100vh で正しく rasterize される。
+    await page.evaluate(() => {
+      const svg = document.querySelector('svg');
+      if (svg !== null) {
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.style.display = 'block';
+      }
+    });
     // SVG の rasterize 完了を 1 frame 待つ
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(null))));
     await page.screenshot({
