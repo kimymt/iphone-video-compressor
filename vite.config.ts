@@ -1,12 +1,18 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import pkg from './package.json' with { type: 'json' };
 
 // Phase 6: PWA 化。VitePWA + Workbox を有効化、autoUpdate 戦略。
 // COOP/COEP は mediabunny が SharedArrayBuffer を要求しない構成なので _headers 不要。
 // (将来 mediabunny の SAB 経路を有効にするなら public/_headers を追加する)
+//
+// V1.1: SettingsSheet のバージョン情報表示用に __APP_VERSION__ を define で注入。
 export default defineConfig({
   base: '/',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   plugins: [
     react(),
     VitePWA({
