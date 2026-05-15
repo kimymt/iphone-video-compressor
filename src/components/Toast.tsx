@@ -10,6 +10,7 @@
 
 import { AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { useToastStore, type Toast, type ToastKind } from '../stores/toastStore';
+import { useT } from '../i18n';
 
 const KIND_STYLES: Record<ToastKind, { bg: string; Icon: typeof Info }> = {
   info: { bg: 'bg-[var(--accent)]', Icon: Info },
@@ -44,6 +45,7 @@ export default function ToastStack() {
 function ToastBubble({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const { bg, Icon } = KIND_STYLES[toast.kind];
   const { role, live } = ariaPropsFor(toast.kind);
+  const t = useT();
 
   return (
     <div
@@ -59,7 +61,7 @@ function ToastBubble({ toast, onDismiss }: { toast: Toast; onDismiss: () => void
         type="button"
         onClick={onDismiss}
         className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
-        aria-label="閉じる"
+        aria-label={t('toast.closeAria')}
       >
         <X aria-hidden="true" size={14} />
       </button>

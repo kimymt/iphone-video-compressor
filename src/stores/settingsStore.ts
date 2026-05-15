@@ -1,20 +1,20 @@
 // V1.1: SettingsSheet 用の軽量 Zustand store。
+// V2: i18n の language preference を追加 (auto / ja / en)。
 //
 // CLAUDE.md「主要モジュール仕様 > src/stores/settingsStore.ts」を参照。
-// プリセット選択 / カメラ案内 dismiss / その他 UI 設定を localStorage に永続化する。
+// プリセット選択 / カメラ案内 dismiss / 言語選択 を localStorage に永続化する。
 //
 // なぜ localStorage か:
-// - 設定値は同期で読み書きしたい (UI 初期化時に即値が必要)
+// - 設定値は同期で読み書きしたい (UI 初期化時に即値が必要、I18nProvider の initialPreference)
 // - 永続化対象は数 KB 未満で容量問題なし
-// - IndexedDB の getSetting/setSetting は async で扱いにくい (hevcBenchSlowdown は
-//   queueStore.init() の async ライフサイクル内で扱われているが、UI 設定は別系統)
+// - IndexedDB の getSetting/setSetting は async で扱いにくい
 //
 // SSR / Node 環境: localStorage 不在時は安全にメモリ内のデフォルト値で動作する。
-// Vitest (jsdom) では localStorage が利用可能。
 
 import { create } from 'zustand';
 import type { EnvCheck, PresetKey } from '../lib/types';
 import { defaultPresetKey, findPreset } from '../lib/presets';
+import type { LocalePreference } from '../i18n';
 
 const STORAGE_KEY = 'iVC.settings.v1';
 
@@ -22,6 +22,8 @@ const STORAGE_KEY = 'iVC.settings.v1';
 interface PersistedSettings {
   preset?: PresetKey;
   cameraTipDismissed?: boolean;
+  /** V2: 言語選択。未保存なら 'auto' が default。 */
+  language?: LocalePreference;
 }
 
 export interface SettingsState {
@@ -29,6 +31,8 @@ export interface SettingsState {
   preset: PresetKey | null;
   /** カメラ案内 (高効率推奨) を非表示にしたか。 */
   cameraTipDismissed: boolean;
+  /** V2: 言語選択 ('auto' | 'ja' | 'en')。default は 'auto' (デバイス追従)。 */
+  language: LocalePreference;
   /** localStorage から復元 + envCheck に応じて default を埋めたか。 */
   initialized: boolean;
 
@@ -37,6 +41,7 @@ export interface SettingsState {
    * - localStorage から復元
    * - 復元値が envCheck 的に無効 (例: HEVC 非対応端末で hevc 系プリセット) なら defaultPresetKey に差し替え
    * - preset が未設定なら defaultPresetKey(envCheck) を採用
+   * - language が未設定なら 'auto' を採用
    */
   init: (envCheck: EnvCheck) => void;
 
@@ -45,6 +50,9 @@ export interface SettingsState {
 
   /** カメラ案内を dismiss。即 localStorage に保存。 */
   dismissCameraTip: () => void;
+
+  /** V2: 言語選択。即 localStorage に保存。 */
+  setLanguage: (lang: LocalePreference) => void;
 }
 
 function safeReadStorage(): PersistedSettings {
@@ -81,9 +89,16 @@ function isPresetAvailable(key: PresetKey, envCheck: EnvCheck): boolean {
   return true;
 }
 
+/** V2: 不明な language 値を 'auto' に正規化する。 */
+function normalizeLanguage(v: LocalePreference | undefined): LocalePreference {
+  if (v === 'auto' || v === 'ja' || v === 'en') return v;
+  return 'auto';
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   preset: null,
   cameraTipDismissed: false,
+  language: 'auto',
   initialized: false,
 
   init(envCheck) {
@@ -96,16 +111,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } else {
       preset = defaultPresetKey(envCheck);
     }
+    const language = normalizeLanguage(stored.language);
 
     set({
       preset,
       cameraTipDismissed: stored.cameraTipDismissed === true,
+      language,
       initialized: true,
     });
 
     // 復元値がデフォルトに差し替わった場合は localStorage も最新値に揃える
-    if (stored.preset !== preset) {
-      safeWriteStorage({ preset, cameraTipDismissed: stored.cameraTipDismissed === true });
+    if (stored.preset !== preset || stored.language !== language) {
+      safeWriteStorage({
+        preset,
+        cameraTipDismissed: stored.cameraTipDismissed === true,
+        language,
+      });
     }
   },
 
@@ -114,6 +135,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     safeWriteStorage({
       preset: key,
       cameraTipDismissed: get().cameraTipDismissed,
+      language: get().language,
     });
   },
 
@@ -122,6 +144,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     safeWriteStorage({
       preset: get().preset ?? undefined,
       cameraTipDismissed: true,
+      language: get().language,
+    });
+  },
+
+  setLanguage(lang) {
+    const normalized = normalizeLanguage(lang);
+    set({ language: normalized });
+    safeWriteStorage({
+      preset: get().preset ?? undefined,
+      cameraTipDismissed: get().cameraTipDismissed,
+      language: normalized,
     });
   },
 }));
@@ -138,6 +171,7 @@ export function _resetSettingsStoreForTest(): void {
   useSettingsStore.setState({
     preset: null,
     cameraTipDismissed: false,
+    language: 'auto',
     initialized: false,
   });
 }

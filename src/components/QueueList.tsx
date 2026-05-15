@@ -3,10 +3,12 @@
 // リスト上部に「完了をすべて削除」ボタンを表示する (clearCompleted を呼ぶ)。
 // 空状態は EmptyState (Video icon + 案内テキスト)。
 // addedAt 昇順でソートして表示 (古い順)。
+// V2: i18n 化 (空状態テキスト / 削除ボタン / aria を t() 経由)。
 
 import { Video, Trash2 } from 'lucide-react';
 import QueueItemRow from './QueueItem';
 import { useQueueStore } from '../stores/queueStore';
+import { useT } from '../i18n';
 import type { QueueItem } from '../lib/types';
 
 export interface QueueListProps {
@@ -17,6 +19,7 @@ const TERMINAL_STATUSES: ReadonlyArray<QueueItem['status']> = ['done', 'failed',
 
 export default function QueueList({ items }: QueueListProps) {
   const clearCompleted = useQueueStore((s) => s.clearCompleted);
+  const t = useT();
   const sorted = [...items].sort((a, b) => a.addedAt - b.addedAt);
 
   if (sorted.length === 0) {
@@ -27,8 +30,8 @@ export default function QueueList({ items }: QueueListProps) {
         className="flex flex-col items-center gap-3 py-16 text-center text-[var(--label-secondary)]"
       >
         <Video size={48} aria-hidden="true" />
-        <p className="font-semibold text-[var(--label)]">まだ何もありません</p>
-        <p className="text-sm">下の「動画を選択」から始められます</p>
+        <p className="font-semibold text-[var(--label)]">{t('empty.title')}</p>
+        <p className="text-sm">{t('empty.hint')}</p>
       </div>
     );
   }
@@ -46,16 +49,16 @@ export default function QueueList({ items }: QueueListProps) {
             }}
             data-testid="clear-completed"
             className="flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-            aria-label={`完了したアイテム ${terminalCount} 件をすべて削除`}
+            aria-label={t('queueList.clearAllAria', { count: terminalCount })}
           >
             <Trash2 size={14} aria-hidden="true" />
-            <span>完了をすべて削除 ({terminalCount})</span>
+            <span>{t('queueList.clearAllCta', { count: terminalCount })}</span>
           </button>
         </div>
       )}
       <ul
         role="list"
-        aria-label="圧縮キュー"
+        aria-label={t('queueList.aria')}
         data-testid="queue-list"
         className="flex flex-col"
       >
