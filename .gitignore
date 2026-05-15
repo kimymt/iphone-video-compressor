@@ -41,3 +41,4 @@ pnpm-debug.log*
 public/sw.js
 public/workbox-*.js
 public/registerSW.js
+.gstack/
