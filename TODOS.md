@@ -1,60 +1,17 @@
 # TODOS
 
-`/plan-eng-review` (2026-05-14) と `/plan-design-review` (2026-05-14) で MVP から外して将来のバージョンに退避した項目、および MVP 着手前に推奨される検証ステップ。Phase 7 終了時点 (2026-05-15) に V1.1 候補も追記。
+`/plan-eng-review` (2026-05-14) と `/plan-design-review` (2026-05-14) で MVP から外して将来のバージョンに退避した項目、および MVP 着手前に推奨される検証ステップ。Phase 7 終了時点 (2026-05-15) に V1.1 候補も追記。v1.1.0 出荷時 (2026-05-15) に完了項目を整理。
 
 ---
 
-## V1.1: SettingsSheet (歯車) の実装
+## ✅ v1.1.0 で完了済み
 
-**何:**
-CLAUDE.md「Information Architecture」で計画していた、ナビバー右上の歯車から開く bottom sheet。プリセット選択 / ストレージ使用量バー / カメラ設定案内 / PWA インストールガイドを置く。`glass-panel` クラスを使う Liquid Glass の主要適用箇所のひとつ。
+CHANGELOG.md の `[1.1.0]` セクションに詳細あり:
 
-**Why:**
-MVP では FilePicker のプリセットを `'standard-hevc'` ハードコードで通している。プリセットを選びたいユーザーは現状コードを書き換える必要がある。MVP の動作確認は通るが、出荷品としては UI が無いと不十分。
-
-**現状 (Phase 7 終了時点):**
-- `glass-panel` クラス + デザインシステムは `src/index.css` に揃っている
-- プリセット 6 個 + `getAvailablePresets(envCheck)` のロジックは `src/lib/presets.ts` に揃っている
-- `settingsStore.ts` (Zustand) は未作成。`SettingsPanel.tsx` も未作成
-
-**Pros:**
-- ユーザーが画質を自分で選べる
-- ストレージ使用量を見て手動で clearCompleted を促せる
-- カメラ「互換性優先」設定の落とし穴を案内できる
-- HEVC 並列ベンチの手動トリガー UI を置ける (V2 と連動)
-
-**Cons:**
-- Drag-to-dismiss + safe area + reduced motion の sheet 実装はそれなり
-- 既定値のままで動くので「絶対に必要」というわけではない
-
-**スコープ:**
-- 0.5〜1 日 (settingsStore、SettingsPanel、TitleBar の歯車、glass-panel 統合、E2E 1〜2 ケース)
-
-**Depends on:** なし
-
----
-
-## V1.1: アイコン差し替え (production assets)
-
-**何:**
-`public/icons/` の 4 PNG (icon-192 / icon-512 / icon-maskable / apple-touch-icon) を、デザイナーが作った本物の素材に差し替える。
-
-**現状:**
-すべて ffmpeg で生成したダミー (#0a0a0a 背景 + #0a84ff の中央ブロック)。寸法は spec 通り。
-
-**Why:**
-ホーム画面に追加した際の見た目が現状ダミーで、ブランド体験が損なわれる。
-
-**Pros:**
-- 1 度差し替えれば二度と触らない
-
-**Cons:**
-- 素材作成のデザインコスト
-
-**スコープ:**
-- 素材があれば 5 分。素材が無ければデザインに 1〜2 時間
-
-**Depends on:** MVP 出荷タイミングに合わせて
+- **SettingsSheet (歯車アイコン)** — bottom sheet でプリセット切替 / ストレージ使用量バー / 言語ピッカー / PWA インストール案内 ([#9](https://github.com/kimymt/iphone-video-compressor/pull/9))
+- **アイコン差し替え (production assets)** — Play + 下向きシェブロンの本番アイコン ([#9](https://github.com/kimymt/iphone-video-compressor/pull/9))
+- **View Transitions API** — キュー追加・削除・retry を smooth な per-item morph + slide-in/out アニメに ([#11](https://github.com/kimymt/iphone-video-compressor/pull/11))
+- **英語 UI / i18n** — auto / 日本語 / English / 简体中文 / 繁體中文 / 한국어 の 5 言語対応、独自 tiny 実装 (~80 行) ([#12](https://github.com/kimymt/iphone-video-compressor/pull/12), [#14](https://github.com/kimymt/iphone-video-compressor/pull/14))
 
 ---
 
@@ -147,34 +104,6 @@ Phase 0 もしくは Phase 6 の最初に `gstack design` (OpenAI API 経由) �
 
 ---
 
-## V2: View Transitions API
-
-**何:**
-`document.startViewTransition` でステート遷移をスムーズなアニメーションにする。プリセット選択、キュー追加、完了時のフェード/スライドなど。
-
-**Why:**
-iOS 26 ネイティブ感のもう一段の polish。MVP では CSS `transition` + React の `key` 切替で 80% カバーできるので、最初は CSS で出してから差分を見て V2 で深い遷移を足す。
-
-**Pros:**
-- 画面遷移が滑らかになり、ネイティブアプリ感が増す
-- iOS 26 Safari は View Transitions をネイティブサポート
-- 差分実装は小さい（フックでラップするだけ）
-
-**Cons:**
-- iOS 26 Safari 以外で動作しないため、フォールバック必須（=2 系統メンテ）
-- アニメーション設計の手間（タイミング、duration、easing）
-
-**スコープ:**
-- 4〜8 時間（`useTransitions()` フック、状態遷移と統合、フォールバック、テスト）
-
-**Context:**
-- レビュー時の決定 TODO-2 で MVP から削除
-- 仕様書の UI スタイル方針から View Transitions の記述を削除し、代わりに CSS `transition` で表現するよう変更済み
-
-**Depends on:** Phase 6 完了後
-
----
-
 ## V2: mid-stream resume（中断地点からの処理再開）
 
 **何:**
@@ -228,31 +157,6 @@ iPad での利用体験向上。iPhone と同じ縦長レイアウトだと画�
 
 ---
 
-## V2: 英語 UI 併記 / i18n 対応
-
-**何:**
-SettingsPanel、エラーメッセージ、QueueItem のステータス表示を英語併記、もしくは i18next 等で i18n 対応。
-
-**Why:**
-海外ユーザー需要。日本以外で WebCodecs の動画圧縮 PWA は珍しいため、英語化でユーザーが広がる可能性。
-
-**Pros:**
-- ユーザー層拡大
-- iOS の `navigator.language` から自動切替できる
-- 海外フィードバックから機能改善のヒントが得られる
-
-**Cons:**
-- 全文言の翻訳コスト
-- 言語切替 UI の追加
-- スクリーンショット類のメンテも 2 系統
-
-**スコープ:**
-- 1〜2 日（i18next 等の導入 + 全文言の翻訳 + 言語切替 UI）
-
-**Depends on:** なし
-
----
-
 ## V2: 自動アップデート時の進行中ジョブ復旧
 
 **何:**
@@ -284,7 +188,7 @@ Phase 6 の `registerType: 'autoUpdate'` は処理中のジョブを中断する
 **Why:**
 VideoToolbox の HEVC エンコーダは単一ハードウェアリソース。2 並列で逆に遅くなる端末がある (CLAUDE.md ハマりどころ 17)。一方、A17/M シリーズ世代では並列が効くこともある。実機データで判定したい。
 
-**現状 (Phase 4c 終了時点):**
+**現状 (v1.1.0 時点):**
 - `effectiveParallelism(preset)` は store に実装済み。`hevcBenchSlowdown === true` のときに HEVC を 1 並列に降格するロジックは既に動く。
 - 自動ベンチは実装していない。`hevcBenchSlowdown` は `null` (= 未計測) で初期化、`null` を false 扱い (= 降格しない)。
 - 結果として現状は parallelism = effectiveParallelism。
@@ -305,9 +209,39 @@ VideoToolbox の HEVC エンコーダは単一ハードウェアリソース。2
 **Context:**
 - CLAUDE.md「実装フェーズ > Phase 4」で当初 Phase 4 に含めていたが、Phase 4c 着手時にユーザー判断で V2 へ退避 (2026-05-15 のセッション)
 - 必要なときに store 側の `hevcBenchSlowdown` を上書きすれば即座に降格する API は揃っている
-- Phase 6 の SettingsSheet 実装時に「並列ベンチを実行」ボタンを置く案も検討
+- v1.1.0 で SettingsSheet が実装済み → そこに「並列ベンチを実行」ボタンを追加するのが現実的
 
-**Depends on:** Phase 6 (SettingsSheet) 完了後、もしくは需要に応じて単独実施
+**Depends on:** 需要に応じて単独実施可能
+
+---
+
+## V2.1: ドキュメント / メタデータの多言語化
+
+**何:**
+UI 本体は 5 言語化済 (v1.1.0)。次のステップとして:
+- `manifest.webmanifest` の多言語化 (ホーム画面アプリ名、`description`)
+- OGP / Twitter Card を locale 別に生成
+- `README.md` / `CHANGELOG.md` / `TODOS.md` の多言語化
+
+**Why:**
+UI が 5 言語対応していても、ホーム画面追加時のアプリ名や検索エンジンに見える OGP は日本語のままになっている。海外ユーザーに対する一貫性を高めるためのフォローアップ。
+
+**Pros:**
+- ホーム画面に表示されるアプリ名が iPhone の言語設定に追従
+- SNS 共有時の OGP プレビューが locale 別
+- GitHub ページに来た海外ユーザーがすぐに使い方を理解できる
+
+**Cons:**
+- manifest の多言語化は Web 標準として未確立 (`localizedAppearance` proposal 段階)
+- 静的 HTML の OGP を locale 別に出すには Vite ビルドの分岐が必要
+- README / CHANGELOG の英訳メンテコストが新規発生
+
+**スコープ:**
+- manifest 多言語化: 2〜4 時間 (現状の Web 仕様で可能な範囲のみ)
+- OGP locale 別: 1 日
+- README / CHANGELOG / TODOS 多言語化: 各 0.5 日 + 継続メンテ
+
+**Depends on:** なし
 
 ---
 
