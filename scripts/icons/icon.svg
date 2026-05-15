@@ -1,0 +1,33 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    動画圧縮 — PWA アイコン (rounded variant)。
+    用途: icon-192.png / icon-512.png / apple-touch-icon.png
+    デザイン: iOS 丸角スクエア (角丸 22%) #0a84ff 背景 + 中央に白い play トライアングル
+             + 右下に下向きダブルシェブロン (compress 記号)。
+    iOS 26 systemBlue (dark mode) と一致する #0a84ff を使用。
+  -->
+  <rect width="1024" height="1024" rx="225" ry="225" fill="#0a84ff"/>
+
+  <!-- Play トライアングル: 中心 (470, 512) 付近に視覚的重心、横幅 ~36% -->
+  <path d="M 340 280 L 700 512 L 340 744 Z" fill="white"/>
+
+  <!-- Compress 記号: 右下、下向きダブルシェブロン (»» を 90° 回転) -->
+  <g transform="translate(815 815)">
+    <path
+      d="M -65 -45 L 0 20 L 65 -45"
+      stroke="white"
+      stroke-width="38"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      fill="none"
+    />
+    <path
+      d="M -65 20 L 0 85 L 65 20"
+      stroke="white"
+      stroke-width="38"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      fill="none"
+    />
+  </g>
+</svg>

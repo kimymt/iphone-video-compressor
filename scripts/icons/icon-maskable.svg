@@ -1,0 +1,36 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    動画圧縮 — PWA アイコン (maskable variant)。
+    用途: icon-maskable.png (Android adaptive icon、PWA Web App Manifest maskable)
+    デザイン: 角丸なしの full-bleed 背景 + foreground は中心 80% (safe zone) 内に収める。
+    Android のシステムが円形 / squircle / 角丸 / teardrop など任意の形にマスクできるよう、
+    端まで背景色が伸び、フォアグラウンド要素は外側 10% を避ける。
+  -->
+  <rect width="1024" height="1024" fill="#0a84ff"/>
+
+  <!-- safe zone (80% = inner 819x819, centered) に foreground を縮小配置 -->
+  <g transform="translate(102, 102) scale(0.8)">
+    <!-- Play トライアングル (rounded variant と同じ) -->
+    <path d="M 340 280 L 700 512 L 340 744 Z" fill="white"/>
+
+    <!-- Compress 記号: 下向きダブルシェブロン -->
+    <g transform="translate(815 815)">
+      <path
+        d="M -65 -45 L 0 20 L 65 -45"
+        stroke="white"
+        stroke-width="38"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+      <path
+        d="M -65 20 L 0 85 L 65 20"
+        stroke="white"
+        stroke-width="38"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+    </g>
+  </g>
+</svg>
