@@ -12,6 +12,9 @@ import {
   _setWorkerImplsForTest,
   _resetWorkerImplsForTest,
 } from '../stores/queueStore';
+// 注意: afterEach で _resetQueueStoreForTest を呼んで in-flight runJob を停止させること
+// (vitest 3 は unhandled rejection を strict 検出するため、leftover spawn が ReferenceError
+// になる)
 import type {
   TranscodeJobOptions,
   TranscodeJobResult,
@@ -66,6 +69,10 @@ describe('FilePicker', () => {
   afterEach(() => {
     cleanup();
     resetMockOpfs();
+    // 1. queue store を先に reset → in-flight runJob は次の transition 後に
+    //    items.find が空になるので line 403 の防御ガードで bail out (worker spawn しない)
+    _resetQueueStoreForTest();
+    // 2. その後で worker mock を default に戻す (この時点で残ジョブは spawn しない)
     _resetWorkerImplsForTest();
     vi.unstubAllGlobals();
   });
