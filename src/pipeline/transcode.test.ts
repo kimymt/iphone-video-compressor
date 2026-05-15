@@ -8,6 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   computeOutputDimensions,
   makeVideoEncoderConfig,
+  shouldForceKeyframe,
+  KEYFRAME_INTERVAL_US,
   TranscodeError,
   TranscodeCancelledError,
   transcode,
@@ -137,6 +139,67 @@ describe('computeOutputDimensions', () => {
     const r = computeOutputDimensions({ width: 1080, height: 720, rotation: 0 }, HEVC_STANDARD);
     // longEdge=1080 = maxLongEdge=1080 → no scale
     expect(r).toEqual({ width: 1080, height: 720 });
+  });
+});
+
+// ---- shouldForceKeyframe ----
+
+describe('shouldForceKeyframe (V2.x: ハマりどころ 33)', () => {
+  it('最初のフレーム (index=0) は IDR (lastKeyframeUs の値に関係なく)', () => {
+    expect(shouldForceKeyframe(0, 0, Number.NEGATIVE_INFINITY)).toBe(true);
+    expect(shouldForceKeyframe(0, 0, 0)).toBe(true);
+    expect(shouldForceKeyframe(0, 1_000_000, 999_999)).toBe(true);
+  });
+
+  it('2 秒未満の差分: 非 IDR', () => {
+    // 30 fps、frame 1 = 33333us、lastKeyframe=0
+    expect(shouldForceKeyframe(1, 33_333, 0)).toBe(false);
+    // frame 30 = 1_000_000us = 1 秒
+    expect(shouldForceKeyframe(30, 1_000_000, 0)).toBe(false);
+    // ちょうど 1_999_999us (2 秒未満)
+    expect(shouldForceKeyframe(60, 1_999_999, 0)).toBe(false);
+  });
+
+  it('2 秒ちょうど: IDR', () => {
+    expect(shouldForceKeyframe(60, 2_000_000, 0)).toBe(true);
+  });
+
+  it('2 秒超過: IDR', () => {
+    expect(shouldForceKeyframe(75, 2_500_000, 0)).toBe(true);
+  });
+
+  it('最後の IDR が直近にあれば、絶対 timestamp が大きくても非 IDR', () => {
+    // 30 秒目で IDR を打ったあと、31 秒目はまだ IDR じゃない
+    expect(shouldForceKeyframe(930, 31_000_000, 30_000_000)).toBe(false);
+    // 32 秒で IDR
+    expect(shouldForceKeyframe(960, 32_000_000, 30_000_000)).toBe(true);
+  });
+
+  it('intervalUs を override できる (1 秒間隔指定)', () => {
+    // index !== 0 + 1 秒未満 → false
+    expect(shouldForceKeyframe(15, 500_000, 0, 1_000_000)).toBe(false);
+    // 1 秒ちょうど → true
+    expect(shouldForceKeyframe(30, 1_000_000, 0, 1_000_000)).toBe(true);
+  });
+
+  it('KEYFRAME_INTERVAL_US は 2 秒 (2_000_000 us)', () => {
+    expect(KEYFRAME_INTERVAL_US).toBe(2_000_000);
+  });
+
+  it('実シナリオ: 30 fps 5 秒動画で IDR は 3 つ (frame 0 + 60 + 120)', () => {
+    // 30 fps、150 フレーム (5 秒) を生成
+    // 期待: frame 0, 60, 120 が IDR、他は P
+    let lastKeyframeUs = Number.NEGATIVE_INFINITY;
+    const keyframeIndices: number[] = [];
+    for (let i = 0; i < 150; i++) {
+      const tsUs = Math.round((i * 1_000_000) / 30);
+      const force = shouldForceKeyframe(i, tsUs, lastKeyframeUs);
+      if (force) {
+        keyframeIndices.push(i);
+        lastKeyframeUs = tsUs;
+      }
+    }
+    expect(keyframeIndices).toEqual([0, 60, 120]);
   });
 });
 

@@ -1025,6 +1025,7 @@ mediabunny は新興ライブラリで iOS 26 Safari + HEVC mux の実績が乏�
 30. **Wake Lock 失敗時は診断情報を UI に出すこと**。「画面 ON 失敗」だけだと `NotAllowedError` か `NotSupportedError` か区別不能で原因究明できない。`WakeLockManager.lastError` を公開し、Indicator に inline 表示 + `data-error-name` 属性 + `title` 属性 + `aria-label` で読めるようにする（v0.9.1 の PR #3、`src/components/WakeLockIndicator.tsx`）
 31. **file picker キャンセル時に `change` が発火しないので Wake Lock が leak する**。`click` で acquire した後にユーザがキャンセルすると `change` イベントは飛ばず、画面 ON のまま残り続ける。60 秒タイマーで `release()` する fallback を入れる（v0.9.1 の PR #4、`src/components/FilePicker.tsx`）
 32. **iPhone 側面の Ring/Silent スイッチが Silent だと WebAudio は完全無音**。`AVAudioSession.category = 'ambient'` の仕様で、Web 側から override する API は存在しない。アプリ側ではトラブルシュート文言（Ring に倒して音量を上げる）を README / UI に出すしかない
+33. **`VideoEncoder` の最初のフレームに `{ keyFrame: true }` を渡さないと、動画は再生できるがサムネイルが真っ白になる**。WebKit (iOS Safari) の VideoEncoder は自動で先頭 IDR を挿入しない実装。プレイヤーは最初の keyframe までシークして再生開始するので動画は OK だが、サムネイル抽出器は「先頭フレーム = timestamp 0」をデコードしようとして失敗する。修正: `encoder.encode(frame, frameIndex === 0 ? { keyFrame: true } : undefined)`。さらに 2 秒ごとに IDR を強制すると Photos の scrub やシーク性能も改善（`KEYFRAME_INTERVAL_US = 2_000_000`、`shouldForceKeyframe` 関数を `transcode.ts` に実装）。ビットレートコストは HEVC で 2-3% 程度なので品質より優先
 
 ---
 
