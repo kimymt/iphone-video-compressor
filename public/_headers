@@ -1,0 +1,20 @@
+# Cloudflare Pages security headers for https://ivc.mymt.casa
+#
+# 設計方針:
+# - クライアント完結 PWA なので外部リソース取得は皆無
+# - React は inline `style={}` を多用するため style-src に 'unsafe-inline' を許容
+# - script-src は 'self' のみ (inline script なし、bundled JS のみ)
+# - Web Worker は Vite が blob URL で配信するため worker-src に 'blob:' を許容
+# - <video> プレビューに OPFS の blob URL を使う想定で media-src に 'blob:'
+# - frame-ancestors 'none' で clickjacking 防止
+#
+# /cso (2026-05-15) の R1 で導入。問題が出たら brand strict 寄りに調整する。
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=(), magnetometer=(), gyroscope=(), accelerometer=(), midi=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Cross-Origin-Opener-Policy: same-origin
