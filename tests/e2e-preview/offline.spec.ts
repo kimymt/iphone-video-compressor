@@ -35,7 +35,8 @@ test.describe('Phase 6 offline (preview build)', () => {
     const res = await request.get('/', { failOnStatusCode: false });
     expect(res.status()).toBe(200);
     const html = await res.text();
-    expect(html).toMatch(/<title>動画圧縮<\/title>/);
+    // V2.x: title は「動画圧縮 — iOS 26+ 専用」(iOS 26+ シグナル付き)
+    expect(html).toMatch(/<title>動画圧縮 — iOS 26\+ 専用<\/title>/);
     expect(html).toMatch(/id="root"/);
 
     await context.setOffline(false);

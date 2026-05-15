@@ -10,6 +10,11 @@
 export const ja = {
   app: {
     title: '動画圧縮',
+    /** V2.x: iOS 26+ 専用であることをヘッダで明示するためのサブタイトル。
+     *  最小限の文言で OS 制約を伝える (iOS 27 が出ても表記変更不要)。 */
+    subtitle: 'iOS 26+ 専用',
+    /** document.title 用の完全形 (タブ・PWA タイトル両方で使用)。 */
+    fullTitle: '動画圧縮 — iOS 26+ 専用',
     loadingAria: '環境を確認中',
     loading: '確認中…',
     queueRestoreFailed: 'キューの復元に失敗しました。アプリを再起動してください。',

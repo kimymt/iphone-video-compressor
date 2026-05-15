@@ -12,6 +12,8 @@ import type { Messages } from './ja';
 export const en: Messages = {
   app: {
     title: 'Video Compressor',
+    subtitle: 'iOS 26+ only',
+    fullTitle: 'Video Compressor — iOS 26+ only',
     loadingAria: 'Checking environment',
     loading: 'Checking…',
     queueRestoreFailed: 'Failed to restore the queue. Please restart the app.',

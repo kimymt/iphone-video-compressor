@@ -21,6 +21,8 @@ test('?dev=1 でタイトル「動画圧縮」 + empty state が表示される'
 });
 
 test('日本語タイトル (document.title) が設定されている', async ({ page }) => {
+  // V2.x: title は「動画圧縮 — iOS 26+ 専用」(iOS 26+ シグナル付き) に変更。
+  // index.html の <title> と I18nProvider の useEffect の両方でセット。
   await page.goto('/?dev=1');
-  await expect(page).toHaveTitle('動画圧縮');
+  await expect(page).toHaveTitle('動画圧縮 — iOS 26+ 専用');
 });

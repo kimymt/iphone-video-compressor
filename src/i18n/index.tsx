@@ -88,9 +88,13 @@ export function I18nProvider({ children, initialPreference = 'auto' }: I18nProvi
   const locale: Locale = preference === 'auto' ? autoLocale : preference;
 
   // <html lang> を locale に合わせる (SEO + screen reader 向け)
+  // document.title も同様に locale 追従させる ("動画圧縮 — iOS 26+ 専用" / "Video Compressor — iOS 26+ only")
   useEffect(() => {
-    if (typeof document !== 'undefined') {
-      document.documentElement.lang = locale;
+    if (typeof document === 'undefined') return;
+    document.documentElement.lang = locale;
+    const fullTitle = getMessage(messages[locale], 'app.fullTitle');
+    if (fullTitle) {
+      document.title = fullTitle;
     }
   }, [locale]);
 
