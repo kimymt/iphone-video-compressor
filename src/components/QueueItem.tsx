@@ -122,6 +122,11 @@ export default function QueueItemRow({ item }: QueueItemProps) {
       aria-label={aria}
       data-testid="queue-item"
       data-status={item.status}
+      // V2: View Transitions API で per-item morph を有効化。
+      // ブラウザは旧 snapshot の同名要素と新 snapshot の同名要素を比較して
+      // 挿入 / 削除 / 並び替えを CSS animation で smooth に再生する。
+      // CSS は index.css の ::view-transition-old/new(*) で定義。
+      style={{ viewTransitionName: `queue-item-${item.id}` }}
       className="flex flex-col gap-2 border-b border-[var(--separator)] py-3"
     >
       {/* 1行目: ファイル名 + ステータスアイコン + アクション */}

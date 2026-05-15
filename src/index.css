@@ -93,3 +93,72 @@ body,
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ============================================================
+   V2: View Transitions API カスタマイズ
+   ------------------------------------------------------------
+   iOS 26 Safari / Chrome 111+ / Safari 18+ で利用可能。
+   QueueItem に `view-transition-name: queue-item-{id}` を付けた状態で
+   queueStore の add / remove / retry が withViewTransition() を発火させると、
+   ブラウザが per-item morph を行う。
+   - 挿入時 (only-child の new): slide-in-up + fade-in
+   - 削除時 (only-child の old): slide-out-down + fade-out
+   - 並び替え / 残留: ブラウザがデフォルトの position morph
+   - root (画面全体の cross-fade): 短めの fade
+   ============================================================ */
+
+@keyframes vt-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vt-slide-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+/* per-item の group (queue-item-*) は iOS easeOut で動かす */
+::view-transition-group(*) {
+  animation-duration: 0.3s;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 新規追加 (new だけ存在 = 該当 name に old が無い) */
+::view-transition-new(*):only-child {
+  animation: vt-slide-in 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* 削除 (old だけ存在 = 該当 name に new が無い) */
+::view-transition-old(*):only-child {
+  animation: vt-slide-out 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* root は画面全体の cross-fade — per-item より速く短く */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.2s;
+  animation-timing-function: ease;
+}
+
+/* Reduced Motion: View Transitions のアニメも止める
+   (上の universal media query は pseudo-element に届かない可能性があるので
+    explicit に書く) */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

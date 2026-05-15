@@ -14,6 +14,7 @@ import {
 } from '../db/indexeddb';
 import { hasEnoughQuota } from '../platform/storage';
 import { findPreset } from '../lib/presets';
+import { withViewTransition } from '../lib/viewTransition';
 import {
   spawnTranscodeWorker as defaultSpawnTranscodeWorker,
   runTranscodeJob as defaultRunTranscodeJob,
@@ -218,7 +219,11 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       };
       await saveQueueItem(item);
       addedIds.push(id);
-      set((state) => ({ items: [...state.items, item] }));
+      // V2: View Transitions API でリスト挿入を smooth に。
+      // 利用不可 / Reduced Motion 時は同期実行。
+      await withViewTransition(() => {
+        set((state) => ({ items: [...state.items, item] }));
+      });
     }
 
     // 追加直後に処理を起動
@@ -242,7 +247,10 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     }
     await deleteFromOpfs(outputPath(id)).catch(() => {});
     await deleteQueueItem(id);
-    set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
+    // V2: View Transitions API でリスト削除を smooth に。
+    await withViewTransition(() => {
+      set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
+    });
   },
 
   async cancel(id) {
@@ -289,9 +297,12 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       status: 'queued',
     };
 
-    set((state) => ({
-      items: state.items.map((i) => (i.id === id ? retried : i)),
-    }));
+    // V2: View Transitions API で retry の status 切替を smooth に。
+    await withViewTransition(() => {
+      set((state) => ({
+        items: state.items.map((i) => (i.id === id ? retried : i)),
+      }));
+    });
     await saveQueueItem(retried).catch(() => {});
     // 中途出力が残っていれば削除 (cancelled は runJob 側で削除しているはずだが defensive)
     await deleteFromOpfs(outputPath(id)).catch(() => {});
