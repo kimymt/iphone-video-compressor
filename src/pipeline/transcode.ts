@@ -111,6 +111,42 @@ function ensureEven(n: number): number {
 }
 
 /**
+ * keyframe (IDR) を強制する間隔 (microseconds)。2 秒 = 2_000_000us。
+ *
+ * CLAUDE.md ハマりどころ 33: WebKit (iOS Safari) の VideoEncoder は最初のフレームを
+ * 自動 IDR にしないので、サムネイル抽出器がデコードできず真っ白になる。
+ * 解決: 最初のフレーム + 2 秒ごとに `{ keyFrame: true }` を渡す。
+ *
+ * 副次効果: シーク性能向上 (Photos の scrub も滑らか)、AirDrop 先での
+ * サムネ表示、Files アプリ / Finder の Quick Look も正常に。
+ *
+ * ビットレートコストは HEVC で 2-3% 程度、品質より優先。
+ */
+export const KEYFRAME_INTERVAL_US = 2_000_000;
+
+/**
+ * このフレームを keyframe (IDR) として encode すべきかを判定する純粋関数。
+ *
+ * - 最初のフレーム (frameIndex === 0) は必ず IDR
+ * - 最後の IDR から KEYFRAME_INTERVAL_US 経過していれば IDR
+ * - それ以外は IDR ではない (encoder が P/B を選ぶ)
+ *
+ * @param frameIndex 0-based。最初のフレームは 0。
+ * @param currentTimestampUs 現フレームの timestamp (microseconds)。
+ * @param lastKeyframeUs 最後に IDR を発した timestamp (microseconds)、初期値 -Infinity。
+ * @param intervalUs IDR 間隔 (microseconds)、デフォルト KEYFRAME_INTERVAL_US。
+ */
+export function shouldForceKeyframe(
+  frameIndex: number,
+  currentTimestampUs: number,
+  lastKeyframeUs: number,
+  intervalUs: number = KEYFRAME_INTERVAL_US,
+): boolean {
+  if (frameIndex === 0) return true;
+  return currentTimestampUs - lastKeyframeUs >= intervalUs;
+}
+
+/**
  * preset と出力 dimensions / fps から VideoEncoderConfig を作る。
  * colorSpace は明示的に BT.709 (CLAUDE.md ハマりどころ 23)。
  */
@@ -274,6 +310,11 @@ async function runVideoPipeline(
   // A/V 共通シフトを microseconds に変換。VideoFrame.timestamp は整数 microseconds。
   const timestampShiftUs = Math.round(sharedShiftSec * 1_000_000);
 
+  // V2.x: keyframe (IDR) 制御。最初のフレーム + 2 秒ごとに IDR を強制。
+  // WebKit が自動 IDR を入れないためサムネイル真っ白問題を回避する (ハマりどころ 33)。
+  let frameIndex = 0;
+  let lastKeyframeUs = Number.NEGATIVE_INFINITY;
+
   try {
     const sink = new VideoSampleSink(dem.videoTrack);
     for await (const sample of sink.samples()) {
@@ -337,7 +378,11 @@ async function runVideoPipeline(
       }
 
       // 5. Encode (timestamp は VFR でもそのまま渡す)
-      encoder.encode(frame);
+      //    keyframe 強制: 最初 + 2 秒間隔 (ハマりどころ 33)
+      const forceKey = shouldForceKeyframe(frameIndex, frame.timestamp, lastKeyframeUs);
+      encoder.encode(frame, forceKey ? { keyFrame: true } : undefined);
+      if (forceKey) lastKeyframeUs = frame.timestamp;
+      frameIndex++;
       frame.close();
 
       progress.processedFrames++;
