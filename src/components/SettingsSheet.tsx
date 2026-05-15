@@ -1,4 +1,5 @@
 // V1.1: 設定 bottom sheet。
+// V2: i18n 化 + 言語ピッカー UI を追加。
 //
 // CLAUDE.md「UI 仕様 > SettingsSheet」を参照。
 // 歯車タップで下から sheet として登場、glass-panel 背景、drag-to-dismiss。
@@ -8,7 +9,8 @@
 // 2. ストレージ使用量バー (getStorageInfo)
 // 3. カメラ設定案内 (高効率推奨、dismiss 可)
 // 4. PWA インストールガイド (standalone でなければ表示)
-// 5. バージョン情報 (__APP_VERSION__ + GitHub リンク)
+// 5. 言語選択 (V2、auto / ja / en の radio)
+// 6. バージョン情報 (__APP_VERSION__ + GitHub リンク)
 //
 // Drag-to-dismiss:
 // - touchstart で startY を記録
@@ -18,11 +20,13 @@
 // - Reduced Motion: drag は動作するがアニメは即時切替
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Settings, X, HardDrive, Camera, Home, Github } from 'lucide-react';
+import { Settings, X, HardDrive, Camera, Home, Github, Languages } from 'lucide-react';
 import type { EnvCheck, PresetKey } from '../lib/types';
 import { getAvailablePresets } from '../lib/presets';
 import { getStorageInfo, type StorageInfo } from '../platform/storage';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useT } from '../i18n';
+import type { LocalePreference } from '../i18n';
 import { formatBytes } from '../lib/format';
 
 const DRAG_DISMISS_PX = 100;
@@ -67,7 +71,10 @@ export default function SettingsSheet({
   const setPreset = useSettingsStore((s) => s.setPreset);
   const cameraTipDismissed = useSettingsStore((s) => s.cameraTipDismissed);
   const dismissCameraTip = useSettingsStore((s) => s.dismissCameraTip);
+  const language = useSettingsStore((s) => s.language);
+  const setLanguage = useSettingsStore((s) => s.setLanguage);
 
+  const t = useT();
   const presets = useMemo(() => getAvailablePresets(envCheck), [envCheck]);
 
   const [storage, setStorage] = useState<StorageInfo | null>(null);
@@ -140,23 +147,23 @@ export default function SettingsSheet({
   // ---- Drag-to-dismiss ----
 
   const onTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    const t = e.touches[0];
-    if (!t) return;
+    const touch = e.touches[0];
+    if (!touch) return;
     const now = performance.now();
-    dragStartRef.current = { y: t.clientY, t: now };
-    dragLastRef.current = { y: t.clientY, t: now };
+    dragStartRef.current = { y: touch.clientY, t: now };
+    dragLastRef.current = { y: touch.clientY, t: now };
     setIsDragging(true);
   }, []);
 
   const onTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
     if (dragStartRef.current === null) return;
-    const t = e.touches[0];
-    if (!t) return;
+    const touch = e.touches[0];
+    if (!touch) return;
     const now = performance.now();
-    const delta = t.clientY - dragStartRef.current.y;
+    const delta = touch.clientY - dragStartRef.current.y;
     // 下方向のみ反映 (上方向は無視、上に引っ張られても 0 から動かない)
     setDragDeltaY(Math.max(0, delta));
-    dragLastRef.current = { y: t.clientY, t: now };
+    dragLastRef.current = { y: touch.clientY, t: now };
   }, []);
 
   const onTouchEnd = useCallback(() => {
@@ -202,11 +209,18 @@ export default function SettingsSheet({
   const storagePct =
     storage && storage.quota > 0 ? Math.min(100, (storage.usage / storage.quota) * 100) : 0;
 
+  // 言語ピッカーのオプション (auto は表記を併記、ja/en は当該言語表記)
+  const languageOptions: ReadonlyArray<{ value: LocalePreference; label: string }> = [
+    { value: 'auto', label: t('settings.language.auto') },
+    { value: 'ja', label: t('settings.language.ja') },
+    { value: 'en', label: t('settings.language.en') },
+  ];
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="設定"
+      aria-label={t('settings.dialogAria')}
       data-testid="settings-sheet"
       data-state={open ? 'open' : 'closed'}
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -214,7 +228,7 @@ export default function SettingsSheet({
       {/* Backdrop */}
       <button
         type="button"
-        aria-label="設定を閉じる"
+        aria-label={t('settings.backdropAria')}
         onClick={onClose}
         className="absolute inset-0 bg-black/40 transition-opacity"
         style={{
@@ -250,12 +264,12 @@ export default function SettingsSheet({
         <div className="flex items-center justify-between px-5 pb-3">
           <h2 className="title flex items-center gap-2 text-xl font-bold">
             <Settings aria-hidden="true" size={20} />
-            設定
+            {t('settings.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            aria-label="閉じる"
+            aria-label={t('settings.closeAria')}
             data-testid="settings-sheet-close"
             className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--label-secondary)] transition-opacity active:opacity-60"
           >
@@ -271,11 +285,11 @@ export default function SettingsSheet({
               id="settings-preset-heading"
               className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
             >
-              圧縮プリセット
+              {t('settings.section.preset')}
             </h3>
             <div
               role="radiogroup"
-              aria-label="圧縮プリセット"
+              aria-label={t('settings.presetGroupAria')}
               className="overflow-hidden rounded-2xl bg-[var(--surface)]"
             >
               {presets.map((p, idx) => {
@@ -307,9 +321,11 @@ export default function SettingsSheet({
                       )}
                     </span>
                     <span className="flex-1">
-                      <span className="block text-sm font-medium">{p.label}</span>
+                      <span className="block text-sm font-medium">
+                        {t(`preset.${p.key}.label`)}
+                      </span>
                       <span className="block pt-0.5 text-xs text-[var(--label-secondary)]">
-                        {p.description}
+                        {t(`preset.${p.key}.description`)}
                       </span>
                     </span>
                   </button>
@@ -318,7 +334,7 @@ export default function SettingsSheet({
             </div>
             {!envCheck.hevcEncode && (
               <p className="pt-2 text-xs text-[var(--label-secondary)]">
-                ※ HEVC が利用できない端末のため H.264 プリセットのみ表示しています。
+                {t('settings.h264Only')}
               </p>
             )}
           </section>
@@ -329,7 +345,7 @@ export default function SettingsSheet({
               id="settings-storage-heading"
               className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
             >
-              ストレージ
+              {t('settings.section.storage')}
             </h3>
             <div className="rounded-2xl bg-[var(--surface)] px-4 py-3">
               <div className="flex items-center gap-2 pb-2">
@@ -340,10 +356,12 @@ export default function SettingsSheet({
                 />
                 <span className="tabular text-sm">
                   {storage === null ? (
-                    <span className="text-[var(--label-secondary)]">読み込み中…</span>
+                    <span className="text-[var(--label-secondary)]">
+                      {t('settings.storage.loading')}
+                    </span>
                   ) : storage.quota === 0 ? (
                     <span className="text-[var(--label-secondary)]">
-                      使用量を取得できません
+                      {t('settings.storage.unknown')}
                     </span>
                   ) : (
                     <>
@@ -358,7 +376,7 @@ export default function SettingsSheet({
               </div>
               <div
                 role="progressbar"
-                aria-label="ストレージ使用率"
+                aria-label={t('settings.storage.barAria')}
                 aria-valuenow={Math.round(storagePct)}
                 aria-valuemin={0}
                 aria-valuemax={100}
@@ -372,7 +390,7 @@ export default function SettingsSheet({
               </div>
               {storage !== null && storage.quota > 0 && (
                 <p className="tabular pt-2 text-xs text-[var(--label-secondary)]">
-                  空き: {formatBytes(storage.available)}
+                  {t('settings.storage.available', { size: formatBytes(storage.available) })}
                 </p>
               )}
             </div>
@@ -385,7 +403,7 @@ export default function SettingsSheet({
                 id="settings-camera-heading"
                 className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
               >
-                カメラ設定の推奨
+                {t('settings.section.camera')}
               </h3>
               <div className="rounded-2xl bg-[var(--surface)] px-4 py-3 text-sm">
                 <div className="flex items-start gap-3 pb-2">
@@ -394,10 +412,11 @@ export default function SettingsSheet({
                     size={18}
                     className="mt-0.5 flex-shrink-0 text-[var(--accent)]"
                   />
-                  <p className="leading-snug text-[var(--label)]">
-                    iPhone の <strong>設定 → カメラ → フォーマット → 高効率</strong>{' '}
-                    に設定すると、撮影された HEVC 動画を圧縮処理しやすくなります。
-                  </p>
+                  <p
+                    className="leading-snug text-[var(--label)]"
+                    // 翻訳ファイル内のみで管理する静的 HTML (ユーザ入力なし)。XSS リスクなし。
+                    dangerouslySetInnerHTML={{ __html: t('settings.cameraTipHtml') }}
+                  />
                 </div>
                 <button
                   type="button"
@@ -405,7 +424,7 @@ export default function SettingsSheet({
                   data-testid="settings-camera-dismiss"
                   className="text-xs text-[var(--accent)] active:opacity-60"
                 >
-                  今後表示しない
+                  {t('settings.cameraDismiss')}
                 </button>
               </div>
             </section>
@@ -418,7 +437,7 @@ export default function SettingsSheet({
                 id="settings-pwa-heading"
                 className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
               >
-                ホーム画面に追加
+                {t('settings.section.pwa')}
               </h3>
               <div className="rounded-2xl bg-[var(--surface)] px-4 py-3 text-sm">
                 <div className="flex items-start gap-3">
@@ -427,15 +446,63 @@ export default function SettingsSheet({
                     size={18}
                     className="mt-0.5 flex-shrink-0 text-[var(--accent)]"
                   />
-                  <p className="leading-snug text-[var(--label)]">
-                    Safari 下部の共有ボタン (□↑) →{' '}
-                    <strong>「ホーム画面に追加」</strong>{' '}
-                    を選ぶと、フルスクリーンで起動できて処理が安定します。
-                  </p>
+                  <p
+                    className="leading-snug text-[var(--label)]"
+                    dangerouslySetInnerHTML={{ __html: t('settings.pwaGuideHtml') }}
+                  />
                 </div>
               </div>
             </section>
           )}
+
+          {/* ---- V2: 言語選択 ---- */}
+          <section aria-labelledby="settings-language-heading" className="pb-4">
+            <h3
+              id="settings-language-heading"
+              className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
+            >
+              <Languages aria-hidden="true" size={12} className="-mt-0.5 mr-1 inline-block" />
+              {t('settings.section.language')}
+            </h3>
+            <div
+              role="radiogroup"
+              aria-label={t('settings.section.language')}
+              className="overflow-hidden rounded-2xl bg-[var(--surface)]"
+            >
+              {languageOptions.map((opt, idx) => {
+                const checked = language === opt.value;
+                return (
+                  <button
+                    type="button"
+                    key={opt.value}
+                    role="radio"
+                    aria-checked={checked}
+                    data-testid={`settings-language-${opt.value}`}
+                    onClick={() => setLanguage(opt.value)}
+                    className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors active:bg-[var(--surface-elevated)] ${
+                      idx !== languageOptions.length - 1
+                        ? 'border-b border-[var(--separator)]'
+                        : ''
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                        checked
+                          ? 'border-[var(--accent)] bg-[var(--accent)]'
+                          : 'border-[var(--label-tertiary)]'
+                      }`}
+                    >
+                      {checked && (
+                        <span className="block h-2 w-2 rounded-full bg-white" />
+                      )}
+                    </span>
+                    <span className="flex-1 text-sm font-medium">{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
 
           {/* ---- バージョン情報 ---- */}
           <section aria-labelledby="settings-version-heading" className="pb-2">
@@ -443,16 +510,16 @@ export default function SettingsSheet({
               id="settings-version-heading"
               className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
             >
-              バージョン
+              {t('settings.section.version')}
             </h3>
             <div className="rounded-2xl bg-[var(--surface)] px-4 py-3 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-[var(--label)]">動画圧縮</span>
+                <span className="text-[var(--label)]">{t('settings.appName')}</span>
                 <span
                   className="tabular text-[var(--label-secondary)]"
                   data-testid="settings-version"
                 >
-                  v{__APP_VERSION__}
+                  {t('settings.versionLabel', { version: __APP_VERSION__ })}
                 </span>
               </div>
               <a
@@ -462,7 +529,7 @@ export default function SettingsSheet({
                 className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--accent)] active:opacity-60"
               >
                 <Github aria-hidden="true" size={12} />
-                ソースコード (GitHub)
+                {t('settings.sourceLink')}
               </a>
             </div>
           </section>

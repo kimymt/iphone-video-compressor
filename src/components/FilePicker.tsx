@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { useQueueStore, type AddResult } from '../stores/queueStore';
 import { unlockAudio } from '../platform/audio';
 import { wakeLockManager } from '../platform/wakeLock';
+import { useT } from '../i18n';
 import type { PresetKey } from '../lib/types';
 
 // Phase 2 で audio unlock を導入、Phase 5 でチャイム実装、Phase 7 で audio.ts に統合。
@@ -31,6 +32,7 @@ export default function FilePicker({ preset, onResult, disabled = false }: Props
   const cancelTimerRef = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const add = useQueueStore((s) => s.add);
+  const t = useT();
 
   const clearCancelTimer = (): void => {
     if (cancelTimerRef.current !== null) {
@@ -102,10 +104,10 @@ export default function FilePicker({ preset, onResult, disabled = false }: Props
         onClick={handleClick}
         disabled={busy || disabled}
         className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[var(--accent)] px-4 py-3 text-base font-semibold text-white shadow-lg transition-opacity active:opacity-80 disabled:opacity-50"
-        aria-label="動画を選択"
+        aria-label={t('filePicker.aria')}
       >
         <Plus size={20} aria-hidden="true" />
-        <span>{busy ? '読み込み中…' : '動画を選択'}</span>
+        <span>{busy ? t('filePicker.loading') : t('filePicker.cta')}</span>
       </button>
       <input
         ref={inputRef}

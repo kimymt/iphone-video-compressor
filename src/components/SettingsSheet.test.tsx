@@ -133,7 +133,9 @@ describe('SettingsSheet — プリセット', () => {
         fetchStorageInfo={fakeStorage}
       />,
     );
-    const radios = screen.getAllByRole('radio');
+    // V2: 言語ピッカーも radio なので、プリセットの radiogroup 内に絞って数える
+    const presetGroup = screen.getByRole('radiogroup', { name: /圧縮プリセット/ });
+    const radios = presetGroup.querySelectorAll('[role="radio"]');
     expect(radios).toHaveLength(6);
   });
 
@@ -148,7 +150,8 @@ describe('SettingsSheet — プリセット', () => {
         fetchStorageInfo={fakeStorage}
       />,
     );
-    const radios = screen.getAllByRole('radio');
+    const presetGroup = screen.getByRole('radiogroup', { name: /圧縮プリセット/ });
+    const radios = presetGroup.querySelectorAll('[role="radio"]');
     expect(radios).toHaveLength(2);
     expect(screen.getByText(/HEVC が利用できない端末/)).toBeTruthy();
   });

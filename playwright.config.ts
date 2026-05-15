@@ -12,12 +12,16 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
+    // V2: 既存テストは日本語前提なので locale を ja-JP に固定。
+    // 言語切替の E2E は localStorage に 'language' を書いてから reload する。
+    locale: 'ja-JP',
   },
   projects: [
     {
       name: 'webkit-iphone',
       use: {
         ...devices['iPhone 15'],
+        locale: 'ja-JP',
       },
     },
   ],

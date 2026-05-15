@@ -2,6 +2,7 @@
 // Phase 4c: failed/cancelled に Retry ボタンを追加 (input が残っていれば有効)。
 // Phase 5: done に Share ボタンを追加 (outputOpfsPath を共有 / ダウンロード)。
 // CLAUDE.md「インタラクションステートカバレッジ」表に対応。
+// V2: i18n 化 (status / aria / sub-text を全て t() 経由)。
 //
 // 本ファイルが提供するのは:
 // - queued: Clock + テキスト + Cancel + Remove
@@ -23,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useQueueStore } from '../stores/queueStore';
 import { formatBytes, formatDuration } from '../lib/format';
+import { useT } from '../i18n';
 import type { QueueItem } from '../lib/types';
 import ShareButton from './ShareButton';
 
@@ -30,21 +32,10 @@ export interface QueueItemProps {
   item: QueueItem;
 }
 
-function statusLabel(status: QueueItem['status']): string {
-  switch (status) {
-    case 'queued':
-      return 'キュー待ち';
-    case 'starting':
-      return '開始中…';
-    case 'processing':
-      return '処理中';
-    case 'done':
-      return '完了';
-    case 'failed':
-      return 'エラー';
-    case 'cancelled':
-      return 'キャンセル済み';
-  }
+/** status キーから翻訳済みステータス文字列を取得。 */
+function useStatusLabel(): (status: QueueItem['status']) => string {
+  const t = useT();
+  return (status) => t(`status.${status}`);
 }
 
 /** 進捗バー (0..100)。Reduced Motion 対応は CSS 側で transition を消す。 */
@@ -101,6 +92,8 @@ export default function QueueItemRow({ item }: QueueItemProps) {
   const cancel = useQueueStore((s) => s.cancel);
   const remove = useQueueStore((s) => s.remove);
   const retry = useQueueStore((s) => s.retry);
+  const t = useT();
+  const statusLabel = useStatusLabel();
 
   const showProgressBar = item.status === 'processing';
   const showCancelBtn = item.status === 'queued' || item.status === 'starting' || item.status === 'processing';
@@ -111,10 +104,12 @@ export default function QueueItemRow({ item }: QueueItemProps) {
   // Share は done かつ outputOpfsPath があるときのみ。
   const showShareBtn = item.status === 'done' && !!item.outputOpfsPath;
   const showRemoveBtn = !showCancelBtn || item.status === 'queued';
-  // queued は cancel と remove 両方表示。queued の cancel は items に残す (cancelled に遷移)、
-  // remove は削除。
 
-  const aria = `${item.fileName}、${statusLabel(item.status)}、進捗 ${item.progress}%`;
+  const aria = t('queueItem.aria', {
+    fileName: item.fileName,
+    status: statusLabel(item.status),
+    percent: item.progress,
+  });
 
   return (
     <li
@@ -123,9 +118,6 @@ export default function QueueItemRow({ item }: QueueItemProps) {
       data-testid="queue-item"
       data-status={item.status}
       // V2: View Transitions API で per-item morph を有効化。
-      // ブラウザは旧 snapshot の同名要素と新 snapshot の同名要素を比較して
-      // 挿入 / 削除 / 並び替えを CSS animation で smooth に再生する。
-      // CSS は index.css の ::view-transition-old/new(*) で定義。
       style={{ viewTransitionName: `queue-item-${item.id}` }}
       className="flex flex-col gap-2 border-b border-[var(--separator)] py-3"
     >
@@ -134,7 +126,7 @@ export default function QueueItemRow({ item }: QueueItemProps) {
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{item.fileName}</p>
           <p className="tabular text-xs text-[var(--label-secondary)]">
-            {renderSubText(item)}
+            {renderSubText(item, t, statusLabel)}
           </p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">
@@ -146,7 +138,7 @@ export default function QueueItemRow({ item }: QueueItemProps) {
                 void cancel(item.id);
               }}
               className="ml-1 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-              aria-label={`${item.fileName} の処理を中止`}
+              aria-label={t('queueItem.cancelAria', { fileName: item.fileName })}
             >
               <X aria-hidden="true" size={18} />
             </button>
@@ -159,9 +151,9 @@ export default function QueueItemRow({ item }: QueueItemProps) {
               }}
               disabled={retryDisabled}
               className="ml-1 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--accent)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--label-tertiary)] disabled:hover:bg-transparent"
-              aria-label={`${item.fileName} を再試行`}
+              aria-label={t('queueItem.retryAria', { fileName: item.fileName })}
               aria-disabled={retryDisabled || undefined}
-              title={retryDisabled ? '入力ファイルが削除されているため再試行できません' : undefined}
+              title={retryDisabled ? t('queueItem.retryDisabledTitle') : undefined}
             >
               <RefreshCw aria-hidden="true" size={18} />
             </button>
@@ -176,7 +168,7 @@ export default function QueueItemRow({ item }: QueueItemProps) {
                 void remove(item.id);
               }}
               className="ml-1 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-              aria-label={`${item.fileName} を削除`}
+              aria-label={t('queueItem.removeAria', { fileName: item.fileName })}
             >
               <Trash2 aria-hidden="true" size={18} />
             </button>
@@ -204,29 +196,52 @@ export default function QueueItemRow({ item }: QueueItemProps) {
  * - done: 入力 → 出力 + 圧縮率
  * - failed: Phase 7 で「この動画は処理できません」+ 生のエラー (CLAUDE.md S10)
  */
-function renderSubText(item: QueueItem): string {
+function renderSubText(
+  item: QueueItem,
+  t: (path: string, vars?: Record<string, string | number>) => string,
+  statusLabel: (status: QueueItem['status']) => string,
+): string {
   switch (item.status) {
     case 'queued':
+      return t('queueItem.sub.queued', {
+        size: formatBytes(item.inputSize),
+        status: statusLabel('queued'),
+      });
     case 'starting':
-      return `${formatBytes(item.inputSize)} · ${statusLabel(item.status)}`;
+      return t('queueItem.sub.queued', {
+        size: formatBytes(item.inputSize),
+        status: statusLabel('starting'),
+      });
     case 'processing': {
       const sizeLabel = formatBytes(item.inputSize);
       if (item.etaSec !== undefined && item.etaSec !== null) {
-        return `${sizeLabel} · 残り ${formatDuration(item.etaSec)}`;
+        return t('queueItem.sub.processingEta', {
+          size: sizeLabel,
+          duration: formatDuration(item.etaSec),
+        });
       }
-      return `${sizeLabel} · ${statusLabel(item.status)}`;
+      return t('queueItem.sub.processing', {
+        size: sizeLabel,
+        status: statusLabel('processing'),
+      });
     }
     case 'done': {
       if (typeof item.outputSize === 'number') {
         const ratio = Math.round((item.outputSize / item.inputSize) * 100);
-        return `${formatBytes(item.inputSize)} → ${formatBytes(item.outputSize)} (${ratio}%)`;
+        return t('queueItem.sub.done', {
+          inputSize: formatBytes(item.inputSize),
+          outputSize: formatBytes(item.outputSize),
+          ratio,
+        });
       }
-      return `${formatBytes(item.inputSize)} · 完了`;
+      return t('queueItem.sub.doneNoOutput', { size: formatBytes(item.inputSize) });
     }
     case 'failed':
-      // S10: 「この動画は処理できません」 + 生のエラー詳細 (デバッグ用に併記)
-      return `この動画は処理できません · ${item.error}`;
+      return t('queueItem.sub.failed', { error: item.error });
     case 'cancelled':
-      return `${formatBytes(item.inputSize)} · ${statusLabel(item.status)}`;
+      return t('queueItem.sub.cancelled', {
+        size: formatBytes(item.inputSize),
+        status: statusLabel('cancelled'),
+      });
   }
 }

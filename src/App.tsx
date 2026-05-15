@@ -12,6 +12,7 @@ import { useQueueStore, type AddResult } from './stores/queueStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { installSideEffects } from './stores/sideEffects';
 import { useToastStore } from './stores/toastStore';
+import { useI18n } from './i18n';
 import { formatBytes } from './lib/format';
 import { defaultPresetKey } from './lib/presets';
 import type { EnvCheck } from './lib/types';
@@ -21,6 +22,7 @@ import type { EnvCheck } from './lib/types';
 // Phase 6: PWA 化。Phase 7: グローバル ToastStack に一元化。
 // Phase 7 post-v0.9.0: WakeLockIndicator (実機で「画面 ON 維持」を見える化)。
 // V1.1: SettingsSheet (歯車アイコンから bottom sheet)。
+// V2: i18n (useT で全文言を翻訳、settingsStore.language を I18nProvider にプッシュ)。
 
 export default function App() {
   const [envCheck, setEnvCheck] = useState<EnvCheck | null>(null);
@@ -31,8 +33,11 @@ export default function App() {
   const initialized = useQueueStore((s) => s.initialized);
 
   const settingsPreset = useSettingsStore((s) => s.preset);
+  const settingsLanguage = useSettingsStore((s) => s.language);
   const settingsInit = useSettingsStore((s) => s.init);
   const settingsInitialized = useSettingsStore((s) => s.initialized);
+
+  const { t, preference: i18nPreference, setPreference: setI18nPreference } = useI18n();
 
   // 起動時 capability check
   useEffect(() => {
@@ -67,10 +72,7 @@ export default function App() {
     if (envCheck?.canRun && !initialized) {
       init().catch((err) => {
         console.error('queueStore.init failed:', err);
-        useToastStore.getState().show(
-          'キューの復元に失敗しました。アプリを再起動してください。',
-          { kind: 'error' },
-        );
+        useToastStore.getState().show(t('app.queueRestoreFailed'), { kind: 'error' });
       });
       ensurePersistent().catch(() => {
         // 失敗しても致命的でない、UI でストレージ状態を表示するだけ。
@@ -80,7 +82,15 @@ export default function App() {
     if (envCheck?.canRun && !settingsInitialized) {
       settingsInit(envCheck);
     }
-  }, [envCheck?.canRun, envCheck, initialized, init, settingsInitialized, settingsInit]);
+  }, [envCheck?.canRun, envCheck, initialized, init, settingsInitialized, settingsInit, t]);
+
+  // V2: settingsStore.language の値を I18nProvider に反映。
+  // settings 初期化後 + ユーザが SettingsSheet で言語を切替えた時の両方で同期される。
+  useEffect(() => {
+    if (settingsInitialized && settingsLanguage !== i18nPreference) {
+      setI18nPreference(settingsLanguage);
+    }
+  }, [settingsInitialized, settingsLanguage, i18nPreference, setI18nPreference]);
 
   // Phase 5: WakeLock + 完了サウンドの side effect を install。
   // initialized 後に 1 度だけ。queueStore の状態遷移を subscribe する。
@@ -116,11 +126,11 @@ export default function App() {
     if (result.ok) return;
     const toast = useToastStore.getState();
     if (result.reason === 'quota-exceeded') {
-      toast.show(`容量が足りません。あと約 ${formatBytes(result.required)} 必要です。`, {
+      toast.show(t('error.quotaExceeded', { size: formatBytes(result.required) }), {
         kind: 'error',
       });
     } else if (result.reason === 'opfs-write-failed') {
-      toast.show(`書き込みに失敗しました: ${result.error}`, { kind: 'error' });
+      toast.show(t('error.writeFailed', { error: result.error }), { kind: 'error' });
     }
   };
 
@@ -129,9 +139,9 @@ export default function App() {
       <main
         className="app flex min-h-dvh items-center justify-center bg-[var(--bg)] text-[var(--label-secondary)]"
         aria-busy="true"
-        aria-label="環境を確認中"
+        aria-label={t('app.loadingAria')}
       >
-        <span>確認中…</span>
+        <span>{t('app.loading')}</span>
       </main>
     );
   }
@@ -152,13 +162,13 @@ export default function App() {
           SettingsSheet は fixed なのでこのコンテナの外。 */}
       <div className="mx-auto flex min-h-dvh w-full max-w-[393px] flex-col">
         <header className="flex items-center justify-between gap-3 px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
-          <h1 className="title text-3xl font-bold">動画圧縮</h1>
+          <h1 className="title text-3xl font-bold">{t('app.title')}</h1>
           <div className="flex items-center gap-2">
             <WakeLockIndicator />
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
-              aria-label="設定を開く"
+              aria-label={t('settings.openAria')}
               data-testid="open-settings"
               className="flex h-11 w-11 items-center justify-center rounded-full text-[var(--label)] transition-opacity active:opacity-60"
             >
