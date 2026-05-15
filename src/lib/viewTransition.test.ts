@@ -80,6 +80,24 @@ describe('withViewTransition — fallback', () => {
     expect(cb).toHaveBeenCalledTimes(1);
     expect(startVT).not.toHaveBeenCalled();
   });
+
+  it('VT 不在 + Reduced Motion ON (両方 true): || で短絡、matchMedia は呼ばれない', async () => {
+    // V2.x MINOR #7: 旧テストは 2 つの fallback 条件を別々にカバーしていたが、
+    // 両方 true のときの挙動 (短絡評価で matchMedia 例外が起きない) を保証する
+    // テストがなかった。Firefox + Reduced Motion ON 等の組み合わせでの regression
+    // 防止。
+    delete docAny.startViewTransition;
+    const matchMediaSpy = vi.fn().mockImplementation(() => {
+      throw new Error('matchMedia should not be called when VT is absent');
+    });
+    (globalThis as GlobalWithVT).matchMedia = matchMediaSpy as unknown as GlobalWithVT['matchMedia'];
+
+    const cb = vi.fn();
+    await withViewTransition(cb);
+    expect(cb).toHaveBeenCalledTimes(1);
+    // 短絡評価で matchMedia は呼ばれない (`typeof startViewTransition !== 'function'` が先に true)
+    expect(matchMediaSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('withViewTransition — API present', () => {

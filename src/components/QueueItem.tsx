@@ -118,7 +118,11 @@ export default function QueueItemRow({ item }: QueueItemProps) {
       data-testid="queue-item"
       data-status={item.status}
       // V2: View Transitions API で per-item morph を有効化。
-      style={{ viewTransitionName: `queue-item-${item.id}` }}
+      // V2.x MINOR #6: tiebreaker として addedAt を suffix に含める。UUID 衝突は
+      // 実質ゼロだが、`_resetQueueStoreForTest()` 後の同一データ再投入や
+      // テスト fixture でハードコード id を使うケースで「old + new で同名」が
+      // 一瞬発生する race を防ぐ。本番影響なし、テスト / debug の堅牢性向上。
+      style={{ viewTransitionName: `queue-item-${item.id}-${item.addedAt}` }}
       className="flex flex-col gap-2 border-b border-[var(--separator)] py-3"
     >
       {/* 1行目: ファイル名 + ステータスアイコン + アクション */}

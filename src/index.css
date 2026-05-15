@@ -145,7 +145,12 @@ body,
   animation: vt-slide-out 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
-/* root は画面全体の cross-fade — per-item より速く短く */
+/* root は画面全体の cross-fade — per-item より速く短く。
+ * V2.x MINOR #8: group も含めて duration 0.2s に統一。
+ * 旧実装は ::view-transition-group(*) の universal 0.3s が root group にも
+ * 適用されていて old/new の 0.2s と 100ms ズレていた (視覚的にはほぼ
+ * 知覚不能だが、意図しないアニメ重複を防ぐため明示する)。 */
+::view-transition-group(root),
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 0.2s;
