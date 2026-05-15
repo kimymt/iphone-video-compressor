@@ -1,79 +1,174 @@
-# 動画圧縮 PWA
+# 動画圧縮 — iPhone Video Compressor
 
-iOS 26 専用の、サーバーレスで動く動画圧縮 PWA。すべての処理は iPhone Safari 上で完結し、動画はサーバーへ送信されません。
+iPhone で撮影した動画を、サーバーへ送らずに iPhone の中だけで圧縮するアプリ。
 
-**本番:** https://ivc.mymt.casa — Cloudflare Pages、main 自動デプロイ
-**ソース:** https://github.com/kimymt/iphone-video-compressor
+🔗 **https://ivc.mymt.casa**
 
-## 何ができる
+---
 
-- iPhone で撮影した動画 (HEVC/H.264、MOV/MP4、HDR/HLG 含む) を選んでローカルで圧縮
-- 複数ファイルをまとめて投入、順次 (またはハイエンド端末では 2 並列) で処理
-- 6 個の固定プリセットから画質と互換性のバランスを選択
-- 進捗バーと残り時間予測を表示
-- 完了した動画は Web Share API で写真ライブラリや他アプリへ直接共有
-- PWA としてホーム画面に追加してスタンドアロン起動
-- 処理中も Wake Lock で画面がスリープしない
-- アプリ再起動後もキュー状態を OPFS / IndexedDB から復元
+## こんな悩みありませんか
+
+- 動画ファイルが大きすぎてメールや LINE で送れない
+- AirDrop でも転送に時間がかかる
+- iPhone のストレージを動画が食いつぶしている
+- 他人に動画を渡したいけれど、クラウドにアップロードするのは抵抗がある
+
+このアプリで圧縮すると、見た目の画質をほぼ維持したままファイルサイズを **1/3〜1/10** にできます。動画データは一切外に送信されません。
+
+---
 
 ## 対応端末
 
-- **iOS 26 以降の Safari のみ**
-- iOS 17〜18.x は `AudioEncoder` 未実装のため音声再エンコードができず非対応
-- 非対応端末では起動時に専用画面 (`UnsupportedScreen`) を表示
+- **iOS 26 以降の iPhone**（Safari）
+- iOS 25 以前は技術的に動作しません（起動時に専用画面でお知らせします）
+
+> なぜ iOS 26 限定？
+> 動画の音声を iPhone 上で再エンコードするのに必要な `AudioEncoder` API が iOS 26 で初めて使えるようになったためです。
+
+---
+
+## 使い方
+
+### 1. ホーム画面に追加（最初の 1 回だけ）
+
+1. iPhone の **Safari** で https://ivc.mymt.casa を開く
+2. 画面下の共有ボタン（□↑）をタップ
+3. メニューから **「ホーム画面に追加」** を選択
+4. ホーム画面のアイコンから起動
+
+> Safari のタブから直接使うこともできますが、ホーム画面から起動するとフルスクリーンで動作し、処理中の挙動も安定します。
+
+### 2. 動画を圧縮する
+
+1. **「動画を選択」** ボタンをタップして写真ライブラリから動画を選ぶ
+   - 複数選択も可能。まとめてキューに入って順に処理されます。
+2. 自動的に圧縮が始まります
+   - 進捗バーと残り時間の予測が表示されます。
+3. 完了したら **「共有」** をタップ
+   - 写真ライブラリへの保存、AirDrop、LINE / メール送信、ファイルアプリへの保存などが選べます。
+
+### 3. プリセット（画質と圧縮率のバランス）
+
+現在は **「標準 (HEVC)」** 固定です（設定画面は今後のアップデートで追加予定）。
+
+| プリセット | こんなときに |
+|---|---|
+| 最高画質 (HEVC) | 編集元素材として保管したい |
+| 高画質 (HEVC) | テレビや PC でしっかり見せたい |
+| **標準 (HEVC)** ★既定 | 普段使い、ストレージ節約 |
+| 軽量 (HEVC) | LINE / Slack に貼り付ける |
+| 互換優先 (H.264) | Android や古い PC へ渡す |
+| 最小 (H.264) | メールに添付する |
+
+---
+
+## よくあるトラブル
+
+### 完了音（チャイム）が鳴らない
+
+iPhone 本体側面のスイッチと音量を確認してください。
+
+1. **Ring/Silent スイッチを「Ring」側に倒す**（オレンジ色が見える状態を解除）
+2. 音量を上げる
+3. **「動画を選択」ボタンを 1 度はタップしてから処理を開始する**
+
+> iOS の仕様で、Silent モード時は Web アプリから音を出すことはできません（アプリ側で迂回不可）。また、音声再生のためにはユーザーが画面を 1 度タップしている必要があります（最初のタップが「音を鳴らしていい」という許可になります）。
+
+### 処理中に画面が暗くなる
+
+ヘッダ右上のバッジを確認してください。
+
+- **「画面 ON」**（太陽アイコン、オレンジ色）→ 画面ロック防止が有効です。問題ありません。
+- **「画面 ON 失敗」**（警告アイコン、赤色）→ 画面ロック防止の取得に失敗しています。エラー名が表示されているのでスクリーンショットをいただけると改善の参考になります。
+
+> 3〜5 分かかる長い動画でも「画面 ON」バッジが消えなければ最後まで処理できます。
+
+### 「容量が足りません」と表示される
+
+圧縮処理には **入力動画サイズの 2.5 倍以上** の空きストレージが必要です。
+
+- **設定 → 一般 → iPhone ストレージ** から不要なアプリ・写真・動画を削除してください。
+- アプリ内で完了済みの動画は、「共有」で写真ライブラリへ保存した後に「削除」ボタンで内部ストレージから消せます。
+
+### 「この動画は処理できません」と表示される
+
+動画ファイルが破損しているか、未対応のコーデックの可能性があります。
+
+- **iPhone の設定 → カメラ → フォーマット を「高効率」** にして撮影した動画が最もスムーズに処理されます。
+- 「互換性優先」設定で撮影した動画も処理可能ですが、ファイルサイズが大きくなりがちです。
+
+---
+
+## プライバシー
+
+- **動画はあなたの iPhone から外に出ません。**
+- すべての処理は iPhone の Safari 内で完結します。
+- サーバーへのアップロード、ログ記録、認証、ユーザー追跡は一切ありません。
+- 出力動画には EXIF や **位置情報も含まれません**（プライバシー保護のため自動削除）。
+
+サービス自体は静的ファイル（HTML / JavaScript）が Cloudflare Pages から配信されているだけで、動画データを受け取る API は存在しません。
+
+---
+
+## アップデート
+
+ホーム画面から起動すると、最新版がある場合は自動的に更新されます。
+
+新機能が反映されない場合は、ホーム画面のアイコンを長押し →「削除」→ もう一度 Safari で開いてホーム画面に追加し直してください（古いキャッシュが残っているケースの確実な対処法）。
+
+---
 
 ## 既知の制限
 
-- ファイル本体はデバイス内に留まる (OPFS) ため、別端末との同期はできない
-- Wake Lock はタブ非表示で自動解除される (visibilitychange で再取得を試みる)
-- 1GB 超の出力は Web Share でほぼ確実に失敗するため、自動でダウンロードフォールバックする
-- VideoToolbox の HEVC エンコーダは単一ハードウェアリソース。2 並列で遅くなる端末がありうるが、現状は自動ベンチを無効化している ([TODOS.md](./TODOS.md) の「V2: HEVC 並列ベンチマーク」参照)
-- iPhone Air は `navigator.hardwareConcurrency` が 4 に capped されるため、parallelism は常に 1
-- カスタムプリセット / ComparePreview / View Transitions / 英語 UI は MVP 外 (V2)
-- iPad の横画面 / 大画面レイアウトは MVP 外 (V2)
-- アイコンはダミー画像のみ。実機リリース前に [public/icons/](./public/icons/) を差し替えること
+- **iPad 横画面 / 大画面レイアウト**: 現状未対応（今後のアップデートで予定）
+- **英語 UI**: 現状日本語のみ（今後のアップデートで予定）
+- **設定画面**: 現状「標準 (HEVC)」固定。プリセット切替の UI は今後追加予定
+- **1GB を超える出力**: iOS の共有メニューで失敗しやすいため、自動的にダウンロード形式へ切替
+- **編集機能 / ComparePreview**: なし（圧縮に特化）
 
-## プリセット (6 種固定)
+---
 
-| key | label | codec | maxLongEdge | videoBitrate | audioBitrate |
-|---|---|---|---|---|---|
-| `best-hevc` | 最高画質 (HEVC) | HEVC | (オリジナル維持) | 12 Mbps | 192 kbps |
-| `high-hevc` | 高画質 (HEVC) | HEVC | 1080 | 5 Mbps | 128 kbps |
-| `standard-hevc` ★既定 | 標準 (HEVC) | HEVC | 1080 | 3 Mbps | 128 kbps |
-| `light-hevc` | 軽量 (HEVC) | HEVC | 720 | 1.5 Mbps | 96 kbps |
-| `compat-h264` | 互換優先 (H.264) | H.264 High | 1080 | 5 Mbps | 128 kbps |
-| `min-h264` | 最小 (H.264) | H.264 Baseline | 480 | 800 kbps | 64 kbps |
+## フィードバック
 
-HEVC 未対応端末では `getAvailablePresets(envCheck)` が H.264 系 2 個のみを返します。
+不具合報告や要望は GitHub Issues へ:
 
-## 技術スタック
+🐛 https://github.com/kimymt/iphone-video-compressor/issues
 
-| 領域 | パッケージ |
-|---|---|
-| ビルド | Vite 5 |
-| UI | React 18 + TypeScript (strict, no `any`) |
-| スタイル | Tailwind CSS + CSS 変数 (iOS HIG トークン) |
-| 状態管理 | Zustand |
-| 永続化 | OPFS + IndexedDB (idb) |
-| 動画処理 | WebCodecs API (ネイティブ) |
-| Demux / Mux | mediabunny |
-| PWA | vite-plugin-pwa (Workbox, autoUpdate) |
-| アイコン | lucide-react |
-| ユニットテスト | Vitest (jsdom) |
-| E2E | Playwright (WebKit + iPhone 15 viewport) |
+実機での問題報告には、エラー画面のスクリーンショットと、iOS のバージョン（設定 → 一般 → 情報）を添えていただけると助かります。
 
-## ローカル開発
+---
+
+<details>
+<summary>開発者向け情報</summary>
+
+ソースコード: https://github.com/kimymt/iphone-video-compressor
+
+技術的な仕様や実装フェーズの詳細は [CLAUDE.md](./CLAUDE.md)、未着手項目は [TODOS.md](./TODOS.md) を参照してください。
+
+### 技術スタック
+
+Vite 5 + React 18 + TypeScript (strict) + Tailwind CSS + Zustand + WebCodecs API + mediabunny + OPFS + IndexedDB + vite-plugin-pwa。
+
+### ローカル開発
 
 ```bash
 npm install
 npm run dev           # http://localhost:5173 (Service Worker は dev でも有効)
-npm run build         # 本番ビルド (tsc -b + vite build)
-npm run preview       # dist/ を http://localhost:4173 で serve
+npm run build         # tsc -b + vite build
+npm run preview       # vite preview → http://localhost:4173
 ```
 
-### iPhone 実機での確認
+### テスト
 
-Cloudflare Tunnel で HTTPS の URL を発行して iPhone 26 Safari で開く:
+```bash
+npm test                    # Vitest (unit)
+npm run test:e2e            # Playwright (dev サーバー)
+npm run test:e2e:offline    # build + preview のオフライン検証
+```
+
+### iPhone 実機での動作確認
+
+Cloudflare Tunnel で HTTPS URL を発行して iPhone Safari で開きます。
 
 ```bash
 # Terminal A
@@ -85,106 +180,42 @@ cloudflared tunnel --url http://localhost:5173
 
 Vite 5.4.12+ のホスト制限により、`vite.config.ts` の `server.allowedHosts` に `.trycloudflare.com` を含めています。
 
-### テスト
+### デプロイ
 
-```bash
-npm test                # Vitest (unit)
-npm run test:watch      # ウォッチモード
-npm run test:e2e        # Playwright (dev サーバー上)
-npm run test:e2e:offline  # build + preview + オフラインキャッシュ検証
-```
+`main` への push で Cloudflare Pages が自動ビルド・デプロイします。
 
-## デプロイ
-
-**Cloudflare Pages** で `main` を自動デプロイしています。
-
-- 本番: https://ivc.mymt.casa (カスタムドメイン)
-- Cloudflare 配下のデフォルト URL: `https://iphone-video-compressor.pages.dev` も同じビルド
+- 本番: https://ivc.mymt.casa
+- 別 URL（同じビルド）: https://iphone-video-compressor.pages.dev
 - Build command: `npm run build` / Build output: `dist` / Framework preset: None
-- `main` への push でビルド + 再デプロイ、Pull Request ごとに Preview Deployment が自動生成 (`<pr-id>.iphone-video-compressor.pages.dev`)
-- HTTPS は Cloudflare が自動。iOS の Service Worker / OPFS persist / WebCodecs secure context 要件をすべて満たす
+- Pull Request ごとに Preview Deployment が自動生成されます
 
-mediabunny は現状 SharedArrayBuffer を要求しないため `public/_headers` の COOP/COEP 設定は不要です。
+### テストフィクスチャ再生成
 
-### iPhone 実機で開く
-
-1. iPhone Safari (iOS 26) で https://ivc.mymt.casa を開く
-2. 共有 (□↑) → **ホーム画面に追加**
-3. ホーム画面のアイコンから起動 → standalone モードで動作
-
-### iPhone 検証時のチェックリスト
-
-- **Wake Lock (画面が暗くならない)**: ヘッダ右上に **「画面 ON」** バッジ (Sun アイコン、warning カラー) が出ていれば取得成功。取得失敗時は **「画面 ON 失敗」** (AlertTriangle、error カラー)。短い動画ではスクリーン idle まで到達しないため、3〜5 分かかる動画で確認するのが確実。
-- **完了チャイム**: iPhone 本体側面の **Ring/Silent スイッチが「Silent」(オレンジ)** だと WebAudio は無音になり、アプリ側から override 不可。サウンドが聞こえない場合は (1) Silent スイッチを「Ring」側に倒す (2) 音量を上げる (3) 動画選択ボタンを 1 度タップしてから処理開始 (audio unlock が必要) を確認する。Phase 7 post-v0.9.0 で AudioContext を `unlockAudio` と `playDoneSound` で共有するようにしたため、FilePicker タップが 1 回でもあれば後続のチャイムは鳴るはず。
-- **オフライン起動**: 機内モード ON → ホーム画面アイコンから起動 → メイン画面が出ること。SW precache 14 entries (~660 KiB) が iPhone Safari にキャッシュされる。
-
-## ディレクトリ構造
-
-```
-iphone-video-compressor/
-├── public/
-│   └── icons/         # 192 / 512 / maskable / apple-touch-icon (ダミー)
-├── src/
-│   ├── main.tsx
-│   ├── App.tsx
-│   ├── components/    # FilePicker / QueueList / QueueItem / ShareButton /
-│   │                   # Toast / UnsupportedScreen
-│   ├── workers/       # compressor.worker + helper
-│   ├── pipeline/      # demux / transcode / mux / rotate / colorConvert
-│   ├── stores/        # queueStore / settingsStore / toastStore / sideEffects
-│   ├── db/            # opfs / indexeddb
-│   ├── platform/      # capability / wakeLock / share / audio / storage
-│   ├── pwa/           # register-sw (VitePWA ラッパ)
-│   └── lib/           # presets / types / format / color-space
-├── tests/
-│   ├── fixtures/      # 1〜3MB 圧縮済み動画 (commit 済み、ffmpeg で生成可)
-│   ├── unit/          # smoke / pwa-assets
-│   ├── e2e/           # dev サーバー上の Playwright spec
-│   └── e2e-preview/   # build + preview 上のオフライン spec
-├── vite.config.ts
-├── vitest.config.ts
-├── playwright.config.ts
-├── playwright.preview.config.ts
-├── tailwind.config.ts
-├── tsconfig.json
-├── package.json
-├── CLAUDE.md          # 仕様書 (本書より詳しい設計判断と未着手項目あり)
-├── TODOS.md           # MVP から外した V2 項目 + 検討項目
-└── README.md          # 本書
-```
-
-## テストフィクスチャ生成
-
-`tests/fixtures/` の動画は再生成可能。ffmpeg と `tests/fixtures/source-*.mov` (実機素材) があれば下記コマンドで作成できます (`tests/fixtures/README.md` も参照):
+`tests/fixtures/` の動画は commit 済みです。再生成が必要な場合は ffmpeg と素材を用意して下記コマンドで作成できます（詳細は `tests/fixtures/README.md`）。
 
 ```bash
-# 縦撮りで rotation=90 メタが付いた 1 秒 MOV
 ffmpeg -i source-portrait.mov -t 1 -b:v 500k -c:v hevc_videotoolbox -tag:v hvc1 \
   tests/fixtures/portrait-rotation-1s.mov
 
-# 1080p Baseline H.264 1 秒
 ffmpeg -i source.mov -t 1 -vf scale=1920:1080 -c:v libx264 -profile:v baseline \
   -b:v 800k tests/fixtures/landscape-1080p-baseline-h264-1s.mp4
 
-# HEVC HLG (HDR) 1 秒
 ffmpeg -i source-hdr.mov -t 1 -c:v hevc_videotoolbox -tag:v hvc1 \
   -color_primaries bt2020 -color_trc arib-std-b67 -colorspace bt2020nc \
   tests/fixtures/landscape-hevc-hdr-1s.mov
 
-# 破損ファイル (Phase 7 のエラー UX 検証用、上記の先頭 30KB をトリム)
 head -c 30000 tests/fixtures/landscape-1080p-baseline-h264-1s.mp4 \
   > tests/fixtures/corrupt-truncated.mp4
 ```
 
-## アイコン
+### アイコン
 
-`public/icons/` の 4 PNG は現状すべて ffmpeg で生成したダミー (#0a0a0a 背景 + #0a84ff の中央ブロック)。実機リリース前にデザイナーが作成した素材で差し替えてください:
+`public/icons/` の 4 PNG（192 / 512 / maskable / apple-touch-icon 180）は現状 ffmpeg で生成したダミー（`#0a0a0a` 背景 + `#0a84ff` の中央ブロック）です。リリース前にデザイナーが作成した素材で差し替えてください。
 
-- `icon-192.png` (192×192)
-- `icon-512.png` (512×512)
-- `icon-maskable.png` (512×512、safe area 80% 想定)
-- `apple-touch-icon.png` (180×180)
+</details>
+
+---
 
 ## ライセンス
 
-このリポジトリは個人プロジェクトであり現時点でライセンスは未定です。
+このリポジトリは個人プロジェクトであり、現時点でライセンスは未定です。
