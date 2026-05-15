@@ -12,7 +12,32 @@
     <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="color-scheme" content="dark light" />
-    <title>動画圧縮</title>
+    <title>動画圧縮 — iOS 26+ 専用</title>
+
+    <!--
+      OGP / 共有時のプレビュー強化 (V2.x: iOS 26+ 専用シグナル)。
+      静的 HTML 1 枚なので og は常に日本語。
+      Locale 切替時の document.title は I18nProvider が JS で書き換える。
+    -->
+    <meta
+      name="description"
+      content="iPhone の動画を iOS 26+ Safari でローカル圧縮するサーバーレス PWA。動画はデバイスから外に出ません。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ivc.mymt.casa" />
+    <meta property="og:title" content="動画圧縮 — iOS 26+ 専用" />
+    <meta
+      property="og:description"
+      content="iPhone の動画を iOS 26+ Safari でローカル圧縮するサーバーレス PWA。動画はデバイスから外に出ません。"
+    />
+    <meta property="og:image" content="https://ivc.mymt.casa/icons/icon-512.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="動画圧縮 — iOS 26+ 専用" />
+    <meta
+      name="twitter:description"
+      content="iPhone の動画を iOS 26+ Safari でローカル圧縮するサーバーレス PWA。"
+    />
+    <meta name="twitter:image" content="https://ivc.mymt.casa/icons/icon-512.png" />
   </head>
   <body>
     <div id="root"></div>

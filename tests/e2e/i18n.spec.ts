@@ -136,3 +136,34 @@ test('<html lang> が locale に追従', async ({ page }) => {
   lang = await page.evaluate(() => document.documentElement.lang);
   expect(lang).toBe('en');
 });
+
+test('iOS 26+ 専用シグナル: ヘッダにサブタイトル + document.title 連動', async ({ page }) => {
+  // 日本語モード: サブタイトル「iOS 26+ 専用」がヘッダに見える
+  const subtitle = page.getByTestId('app-subtitle');
+  await expect(subtitle).toBeVisible();
+  await expect(subtitle).toHaveText('iOS 26+ 専用');
+
+  // document.title も「動画圧縮 — iOS 26+ 専用」
+  await expect(page).toHaveTitle('動画圧縮 — iOS 26+ 専用');
+
+  // English に切替 → サブタイトルも翻訳される
+  await page.getByTestId('open-settings').click();
+  await page.getByTestId('settings-language-en').click();
+  await page.getByTestId('settings-sheet-close').click();
+  await expect(subtitle).toHaveText('iOS 26+ only');
+  await expect(page).toHaveTitle('Video Compressor — iOS 26+ only');
+});
+
+test('og:title / meta description にも iOS 26+ 専用 が反映されている (静的 HTML)', async ({ request }) => {
+  const res = await request.get('/');
+  expect(res.status()).toBe(200);
+  const html = await res.text();
+  // og:title
+  expect(html).toMatch(/<meta\s+property="og:title"\s+content="動画圧縮 — iOS 26\+ 専用"/);
+  // description
+  expect(html).toMatch(/<meta\s+name="description"\s+content="[^"]*iOS 26\+ Safari[^"]*"/);
+  // twitter card
+  expect(html).toMatch(/<meta\s+name="twitter:card"\s+content="summary_large_image"/);
+  // <title> tag (SSR / initial HTML)
+  expect(html).toMatch(/<title>動画圧縮 — iOS 26\+ 専用<\/title>/);
+});

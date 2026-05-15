@@ -162,8 +162,17 @@ export default function App() {
           SettingsSheet は fixed なのでこのコンテナの外。 */}
       <div className="mx-auto flex min-h-dvh w-full max-w-[393px] flex-col">
         <header className="flex items-center justify-between gap-3 px-4 pb-2 pt-[max(env(safe-area-inset-top),12px)]">
-          <h1 className="title text-3xl font-bold">{t('app.title')}</h1>
-          <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <h1 className="title text-3xl font-bold">{t('app.title')}</h1>
+            {/* V2.x: iOS 26+ 専用シグナル。ヘッダの 2 段組で目立たせず、しかし常に見える。 */}
+            <p
+              data-testid="app-subtitle"
+              className="tabular pt-0.5 text-xs text-[var(--label-secondary)]"
+            >
+              {t('app.subtitle')}
+            </p>
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-2">
             <WakeLockIndicator />
             <button
               type="button"
