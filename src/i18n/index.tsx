@@ -105,6 +105,26 @@ function interpolate(template: string, vars?: Record<string, string | number>): 
   });
 }
 
+/**
+ * M4: `*Html` 接尾辞のキーは `dangerouslySetInnerHTML` で raw HTML として描画される想定。
+ * vars が渡されると user-controlled input が HTML に注入されて XSS の温床になる。
+ *
+ * 現状 `cameraTipHtml` / `pwaGuideHtml` は静的文字列のみで呼ばれており実害なしだが、
+ * 将来「{user} を埋め込みたい」と思って vars を追加した瞬間に XSS 化するのを防ぐ。
+ *
+ * dev: throw でビルド時に止める / prod: console.error + raw template を返す (UI が壊れないように)。
+ * 戻り値が true なら呼び出し側は vars 無視で raw template を返す。
+ */
+function rejectHtmlInterpolation(path: string, vars?: Record<string, string | number>): boolean {
+  if (vars === undefined) return false;
+  if (!path.endsWith('Html')) return false;
+  const msg = `i18n: Refusing to interpolate vars into "${path}" (Html-suffixed keys are rendered as raw HTML and must not include user input). Pass no vars, or split into separate non-Html keys + React children.`;
+  if (IS_DEV) throw new Error(msg);
+  // eslint-disable-next-line no-console
+  console.error(msg);
+  return true;
+}
+
 const IS_DEV =
   typeof import.meta !== 'undefined' && (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 
@@ -148,6 +168,7 @@ export function I18nProvider({ children, initialPreference = 'auto' }: I18nProvi
         // 開発: 明示的に missing を可視化。本番: キーをそのまま返す (UI が壊れない)
         return IS_DEV ? `[missing: ${path}]` : path;
       }
+      if (rejectHtmlInterpolation(path, vars)) return tmpl;
       return interpolate(tmpl, vars);
     };
   }, [locale]);
@@ -165,6 +186,7 @@ const FALLBACK_LOCALE: Locale = 'ja';
 const fallbackT: I18nContextValue['t'] = (path, vars) => {
   const tmpl = getMessage(messages[FALLBACK_LOCALE], path);
   if (tmpl === undefined) return IS_DEV ? `[missing: ${path}]` : path;
+  if (rejectHtmlInterpolation(path, vars)) return tmpl;
   return interpolate(tmpl, vars);
 };
 const fallbackContext: I18nContextValue = {
@@ -196,6 +218,7 @@ export function tForLocale(
 ): string {
   const tmpl = getMessage(messages[locale], path);
   if (tmpl === undefined) return IS_DEV ? `[missing: ${path}]` : path;
+  if (rejectHtmlInterpolation(path, vars)) return tmpl;
   return interpolate(tmpl, vars);
 }
 

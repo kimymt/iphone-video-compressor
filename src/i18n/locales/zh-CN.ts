@@ -51,7 +51,7 @@ export const zhCN: Messages = {
       processingEta: '{size} · 剩余 {duration}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 已完成',
-      failed: '此视频无法处理 · {error}',
+      failed: '此视频无法处理',
       cancelled: '{size} · {status}',
     },
   },

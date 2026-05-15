@@ -137,6 +137,73 @@ export default function SettingsSheet({
     return () => window.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
+  // M2: body scroll lock — open 中は背景スクロールを禁止 (iOS Safari の rubber-band 含む)。
+  // CLAUDE.md「UI 仕様 > SettingsSheet」の modal invariant を満たす。
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  // M3: focus trap — open 時に panel 内へフォーカス移動 + Tab を panel 内に閉じ込め、
+  // close 時に元の要素に restore。`aria-modal="true"` の invariant を実装で担保する。
+  useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    if (panel === null) return;
+    const previousActive = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const focusableSelector =
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    const collectFocusable = (): HTMLElement[] => {
+      const nodes = panel.querySelectorAll<HTMLElement>(focusableSelector);
+      return Array.from(nodes).filter((el) => !el.hasAttribute('disabled'));
+    };
+
+    // 初期フォーカス: close ボタンが先頭にあるのでそこに合わせる。なければ panel 自体。
+    const focusables = collectFocusable();
+    const initial = focusables[0] ?? panel;
+    // panel を focusable にしてフォールバック対応 (tabIndex=-1 で programmatic focus 可、Tab には乗らない)
+    panel.setAttribute('tabindex', '-1');
+    initial.focus({ preventScroll: true });
+
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key !== 'Tab') return;
+      const current = collectFocusable();
+      if (current.length === 0) {
+        e.preventDefault();
+        panel.focus({ preventScroll: true });
+        return;
+      }
+      const first = current[0];
+      const last = current[current.length - 1];
+      if (first === undefined || last === undefined) return;
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !panel.contains(active))) {
+        e.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!e.shiftKey && (active === last || !panel.contains(active))) {
+        e.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+
+    document.addEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', handler);
+      // restore focus — close 後に gear ボタンへ戻る期待値
+      if (previousActive !== null && document.contains(previousActive)) {
+        previousActive.focus({ preventScroll: true });
+      }
+    };
+  }, [open]);
+
   const handlePresetSelect = useCallback(
     (key: PresetKey) => {
       setPreset(key);
@@ -224,7 +291,7 @@ export default function SettingsSheet({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={t('settings.dialogAria')}
+      aria-labelledby="settings-sheet-title"
       data-testid="settings-sheet"
       data-state={open ? 'open' : 'closed'}
       className="fixed inset-0 z-50 flex flex-col justify-end"
@@ -266,7 +333,7 @@ export default function SettingsSheet({
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 pb-3">
-          <h2 className="title flex items-center gap-2 text-xl font-bold">
+          <h2 id="settings-sheet-title" className="title flex items-center gap-2 text-xl font-bold">
             <Settings aria-hidden="true" size={20} />
             {t('settings.title')}
           </h2>

@@ -50,7 +50,7 @@ export const ko: Messages = {
       processingEta: '{size} · 남은 시간 {duration}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 완료',
-      failed: '이 동영상은 처리할 수 없습니다 · {error}',
+      failed: '이 동영상은 처리할 수 없습니다',
       cancelled: '{size} · {status}',
     },
   },

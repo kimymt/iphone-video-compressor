@@ -193,7 +193,12 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       };
     }
 
+    // M1: OPFS write を逐次で全て終わらせてから、1 つの View Transition で
+    // まとめて state に反映する。これにより N 件選択時に全アイテムが並列に
+    // slide-in する (旧実装は各 add で startViewTransition が連鎖し、前の
+    // transition が skip されて最後の 1 件だけアニメする問題があった)。
     const addedIds: string[] = [];
+    const newItems: QueueItem[] = [];
     const now = Date.now();
     for (const file of files) {
       const id = crypto.randomUUID();
@@ -219,10 +224,13 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       };
       await saveQueueItem(item);
       addedIds.push(id);
-      // V2: View Transitions API でリスト挿入を smooth に。
-      // 利用不可 / Reduced Motion 時は同期実行。
+      newItems.push(item);
+    }
+
+    // 全 OPFS write 完了後、1 トランジションでまとめて反映 (全アイテム並列 slide-in)
+    if (newItems.length > 0) {
       await withViewTransition(() => {
-        set((state) => ({ items: [...state.items, item] }));
+        set((state) => ({ items: [...state.items, ...newItems] }));
       });
     }
 
@@ -311,15 +319,34 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
   },
 
   async clearCompleted() {
-    const targets = get()
-      .items.filter(
-        (i) => i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
-      )
-      .map((i) => i.id);
-    // remove() を順次呼ぶ。実行中ジョブには触らないので abort 経路は no-op。
-    for (const id of targets) {
-      await get().remove(id);
-    }
+    // M1: 旧実装は remove() を順次呼んでいたが、remove() 内の withViewTransition が
+    // 連続発火すると前の transition が skip されて最後の 1 件だけ slide-out アニメ
+    // になっていた。OPFS / IndexedDB 削除は transition 外で全件並列に実行し、
+    // 最後に 1 つの View Transition で state を一括 filter する (全件並列 slide-out)。
+    const targets = get().items.filter(
+      (i) => i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
+    );
+    if (targets.length === 0) return;
+
+    // 永続化層の削除は parallel に。実行中ジョブには触らないので abort 経路は不要。
+    await Promise.all(
+      targets.map(async (item) => {
+        if (item.inputOpfsPath) {
+          await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
+        }
+        if (item.outputOpfsPath) {
+          await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
+        }
+        await deleteFromOpfs(outputPath(item.id)).catch(() => {});
+        await deleteQueueItem(item.id);
+      }),
+    );
+
+    // state 反映は 1 つの transition でまとめる
+    const idsToRemove = new Set(targets.map((i) => i.id));
+    await withViewTransition(() => {
+      set((state) => ({ items: state.items.filter((i) => !idsToRemove.has(i.id)) }));
+    });
   },
 
   effectiveParallelism(preset) {

@@ -270,6 +270,54 @@ describe('Provider + t()', () => {
   });
 });
 
+describe('M4: rejectHtmlInterpolation guard (XSS 予防)', () => {
+  // 旧実装は cameraTipHtml / pwaGuideHtml を dangerouslySetInnerHTML で描画していたが、
+  // interpolate() が vars を受け取って string-replace するため、将来 user input が
+  // vars に混ざる PR が出た瞬間 XSS 化する設計穴があった。
+  // ガードは *Html 接尾辞のキーに vars が渡されたら dev で throw、prod で raw 返却。
+
+  it('Html 接尾辞 + vars: dev (vitest run = DEV) では throw', () => {
+    function Throws() {
+      const t = useT();
+      // 故意に Html キーに vars を渡す → ガードが throw
+      expect(() => t('settings.cameraTipHtml', { user: 'EVIL<script>' })).toThrow(
+        /Refusing to interpolate vars/,
+      );
+      return null;
+    }
+    render(
+      <I18nProvider initialPreference="ja">
+        <Throws />
+      </I18nProvider>,
+    );
+  });
+
+  it('Html 接尾辞 + vars 無し: 通常通り raw template を返す (`<strong>` 含む)', () => {
+    render(
+      <I18nProvider initialPreference="ja">
+        <Probe paths={['settings.cameraTipHtml']} />
+      </I18nProvider>,
+    );
+    const text = screen.getByTestId('probe-settings.cameraTipHtml').textContent ?? '';
+    expect(text).toContain('<strong>');
+    expect(text).toContain('高効率');
+  });
+
+  it('非 Html キー + vars: 通常通り補間する (regression 防止)', () => {
+    render(
+      <I18nProvider initialPreference="ja">
+        <Probe
+          paths={['status.processing']}
+          vars={{ size: '120 MB', duration: '残り 30 秒' }}
+        />
+      </I18nProvider>,
+    );
+    // status.processing は ja で '処理中' (vars 無し) なので、vars が来ても影響なし。
+    // このテストは「Html 以外のキーは vars を許容する」ことの sanity check。
+    expect(screen.getByTestId('probe-status.processing').textContent).toBe('処理中');
+  });
+});
+
 describe('Messages 型整合性 (全 locale)', () => {
   function flatten(obj: unknown, prefix = ''): string[] {
     if (obj === null || typeof obj !== 'object') return [prefix];
