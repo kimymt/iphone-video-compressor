@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-05-15 — V1.1 Feature Batch
+
+v1.0.0 出荷後の機能拡充とバグ修正を集約した MINOR リリース。**設定シート (歯車)** でプリセット切替・言語選択・ストレージ管理を可能に、**i18n** で 5 言語対応（日本語 / English / 简体中文 / 繁體中文 / 한국어）、**View Transitions API** でキュー操作を smooth に、**サムネイル真っ白問題** を keyframe 強制で修正。累積 7 PR (#9–#15) をマージ済。
+
+### Added
+
+- **SettingsSheet (歯車アイコン)** — ヘッダ右上の歯車から開く bottom sheet。プリセット切替 / ストレージ使用量バー / 言語ピッカー / PWA インストール案内を 1 箇所に集約。`glass-panel` クラスを使った Liquid Glass の主要適用箇所のひとつ ([#9](https://github.com/kimymt/iphone-video-compressor/pull/9))
+- **アイコン差し替え (production assets)** — Play + 下向きシェブロンの本番アイコンを `public/icons/` に投入 (192 / 512 / maskable / apple-touch-icon 180) ([#9](https://github.com/kimymt/iphone-video-compressor/pull/9))
+- **View Transitions API** — `document.startViewTransition` でキュー追加・削除・retry を per-item morph + slide-in/out アニメに。`withViewTransition()` ラッパーで未対応ブラウザ + Reduced Motion で自動フォールバック。`QueueItem` ごとに `viewTransitionName: queue-item-${id}` を付けて per-item morph を有効化 ([#11](https://github.com/kimymt/iphone-video-compressor/pull/11))
+- **i18n 基盤 + 英語 UI** — react-i18next 等の重量級ライブラリは採用せず、~80 行の独自 tiny 実装。`ja.ts` が型推論の元 (`Messages = typeof ja`)、`en.ts` は satisfies でキー整合性を build 時保証。`LocalePreference` (`'auto' | Locale` の union) と `Locale` を分離、auto は `detectLocale()` で iOS の `navigator.language` から解決。`<html lang>` を locale に追従、`tForLocale` で React 外（SW toast 等）からも翻訳取得可能 ([#12](https://github.com/kimymt/iphone-video-compressor/pull/12))
+- **iOS 26+ 専用シグナル + OGP** — サービス名 / manifest は変更せず、ヘッダ `<h1>` の下に小さなサブタイトル「iOS 26+ 専用 / iOS 26+ only」を追加。`<title>` を「動画圧縮 — iOS 26+ 専用」 / "Video Compressor — iOS 26+ only" に。`index.html` に og:title / description / image / type / url + Twitter Card を追加（静的 HTML、日本語固定）。`I18nProvider` で `document.title` を locale に追従 ([#13](https://github.com/kimymt/iphone-video-compressor/pull/13))
+- **i18n 拡張: 簡体中文 / 繁體中文 / 한국어** — 既存 auto / ja / en に 3 言語追加（計 5 言語対応）。`detectLocale` を BCP-47 / Unicode CLDR 準拠で分類（zh-HK は Apple HIG / Unicode 推奨に従い繁体扱い）。翻訳は手書き、技術用語（HEVC, H.264, WebCodecs, Wake Lock, OPFS, PWA）はそのまま。言語ピッカーは native script で表示 ([#14](https://github.com/kimymt/iphone-video-compressor/pull/14))
+
+### Fixed
+
+- **メインコンテナに max-width: 393px を適用 (ISSUE-001)** — レスポンシブ仕様未実装で iPhone Pro Max (430px) では左右に余白が広がりすぎる QA 報告に対処 ([#10](https://github.com/kimymt/iphone-video-compressor/pull/10))
+- **出力 MP4 のサムネイル真っ白問題** — WebKit (iOS Safari) の `VideoEncoder` は最初のフレームに `{ keyFrame: true }` を渡さないと自動 IDR を挿入しない実装。動画は再生可能だが、サムネ抽出器が「先頭フレーム = timestamp 0」を独立デコード試行 → 差分情報しか無くデコード失敗 → 真っ白という症状になっていた。`shouldForceKeyframe(frameIndex, currentTimestampUs, lastKeyframeUs, intervalUs)` 純粋関数で最初のフレーム + 2 秒ごとに IDR を強制。副次効果として iOS Photos スクラブが滑らかに、Files / AirDrop / macOS Quick Look でもサムネ正常表示、動画編集アプリ取り込み時 preview 正常に。ビットレートコストは HEVC で 2-3% 増（品質より優先）([#15](https://github.com/kimymt/iphone-video-compressor/pull/15))
+
+### Documentation
+
+- **CLAUDE.md「ハマりどころ事前共有」に #33 を追記** — `VideoEncoder` の最初のフレームに `keyFrame: true` を渡さないとサムネが真っ白になる症状・原因・対処を記録。判定ロジックを純粋関数として切り出し、8 件の unit test で境界条件を完全カバー
+- **TODOS.md を整理** — v1.1.0 で完了した 4 項目（SettingsSheet / アイコン差し替え / View Transitions / i18n）を「v1.1.0 で完了済み」セクションに集約、本体から削除。V2.1 セクションに「ドキュメント / メタデータの多言語化」候補を新規追加
+
+### テスト
+
+- Vitest: **473 / 473** (v1.0.0 出荷時 394 → +79 件)
+- Playwright (dev、WebKit iPhone): **42 / 42** (v1.0.0 時 23 → +19 件)
+- Playwright (preview、オフライン): **2 / 2**
+- `tsc -b`: clean (strict + `any` ゼロ厳守を継続)
+
+### 累積 PR (v1.0.0 以降)
+
+| # | 区分 | 概要 |
+|---|---|---|
+| [#9](https://github.com/kimymt/iphone-video-compressor/pull/9) | feat | V1.1 polish (SettingsSheet + アイコン差し替え) |
+| [#10](https://github.com/kimymt/iphone-video-compressor/pull/10) | fix(qa) | max-width 393px (レスポンシブ仕様) |
+| [#11](https://github.com/kimymt/iphone-video-compressor/pull/11) | feat | View Transitions API |
+| [#12](https://github.com/kimymt/iphone-video-compressor/pull/12) | feat | i18n 基盤 + 英語 UI |
+| [#13](https://github.com/kimymt/iphone-video-compressor/pull/13) | feat | iOS 26+ 専用シグナル + OGP |
+| [#14](https://github.com/kimymt/iphone-video-compressor/pull/14) | feat | i18n 拡張 (簡体/繁體/한국어) |
+| [#15](https://github.com/kimymt/iphone-video-compressor/pull/15) | fix | サムネイル真っ白問題 (keyframe 強制) |
+
+---
+
 ## [1.0.0] - 2026-05-15 — MVP Release
 
 🎉 **MVP 出荷。** iPhone (iOS 26+) で動画をローカル圧縮するサーバーレス PWA としての最初の安定版。
@@ -115,6 +159,7 @@ MVP Phase 0〜7 完了。GitHub + Cloudflare Pages にデプロイ。
 - **Phase 6**: PWA 化 (Service Worker + apple-touch-icon + manifest + offline)
 - **Phase 7**: エラー UX 統一 + console.log 削除 + テスト整備
 
+[1.1.0]: https://github.com/kimymt/iphone-video-compressor/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kimymt/iphone-video-compressor/releases/tag/v1.0.0
 [0.9.1]: https://github.com/kimymt/iphone-video-compressor/releases/tag/v0.9.1
 [0.9.0]: https://github.com/kimymt/iphone-video-compressor/releases/tag/v0.9.0
