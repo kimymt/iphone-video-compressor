@@ -51,7 +51,7 @@ export const en: Messages = {
       processingEta: '{size} · {duration} remaining',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · Done',
-      failed: 'This video cannot be processed · {error}',
+      failed: 'This video could not be processed',
       cancelled: '{size} · {status}',
     },
   },

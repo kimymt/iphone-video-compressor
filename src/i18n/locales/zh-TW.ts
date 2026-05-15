@@ -51,7 +51,7 @@ export const zhTW: Messages = {
       processingEta: '{size} · 剩餘 {duration}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 已完成',
-      failed: '此影片無法處理 · {error}',
+      failed: '此影片無法處理',
       cancelled: '{size} · {status}',
     },
   },

@@ -52,7 +52,7 @@ export const ja = {
       processingEta: '{size} · 残り {duration}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 完了',
-      failed: 'この動画は処理できません · {error}',
+      failed: 'この動画は処理できませんでした',
       cancelled: '{size} · {status}',
     },
   },

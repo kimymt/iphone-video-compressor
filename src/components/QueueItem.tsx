@@ -237,7 +237,11 @@ function renderSubText(
       return t('queueItem.sub.doneNoOutput', { size: formatBytes(item.inputSize) });
     }
     case 'failed':
-      return t('queueItem.sub.failed', { error: item.error });
+      // M6: 旧実装は {error} 補間で Worker 内部の英語例外メッセージ
+      // (NotSupportedError 等) を生で UI に出していて i18n が破れていた。
+      // ユーザ向けには「処理できませんでした」のみ表示し、raw error は
+      // item.error に保持され dev コンソール / IndexedDB 経由で診断可能。
+      return t('queueItem.sub.failed');
     case 'cancelled':
       return t('queueItem.sub.cancelled', {
         size: formatBytes(item.inputSize),
