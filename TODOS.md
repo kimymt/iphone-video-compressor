@@ -266,3 +266,74 @@ iPhone 12+ で HDR 録画したユーザーが「画質を保ったまま圧縮�
 - 3〜5 日
 
 **Depends on:** MVP（V1）出荷後にユーザーフィードバックを集めてから判断
+
+---
+
+## V2.x: Eng Review (2026-05-15) で出た MINOR バックログ
+
+`/cso` + retrospective engineering review (v0.9.1 → main 累積 12 PR レビュー) で見つかった改善余地。すべて optional ですが、機会あれば。
+
+### i18n (高優先度)
+
+1. **drift テストに placeholder set 比較を追加** ([src/i18n/index.test.tsx:285-296](src/i18n/index.test.tsx))
+   現状: キー集合のみ runtime 一致を検証。`ja` で `'残り {duration}'` が翻訳ミスで他 locale で `'剩餘 {time}'` になっても TS も runtime test も通る。
+   対処: `it.each` 内で `extractPlaceholders(jaValue)` と各 locale 同キーの set を比較 (10 行)。
+
+2. **`detectLocale()` で `navigator.languages[]` を見る** ([src/i18n/index.tsx:64-65](src/i18n/index.tsx))
+   現状: `navigator.language` (1 個) のみ。iOS で言語優先順位を `[zh-TW, ja, en]` に並べているユーザを取りこぼす可能性。
+   対処: `for (const l of navigator.languages ?? [navigator.language])` で順次マッチ、未マッチで `'en'`。
+
+3. **`isValidLocale` / `isValidLocalePreference` と `settingsStore.normalizeLanguage` の二重実装解消** ([src/stores/settingsStore.ts:96-108](src/stores/settingsStore.ts))
+   現状: i18n と settingsStore で同じ列挙を別々に管理。Locale 追加のたびに 2 箇所同期する手間。
+   対処: settingsStore 側で `isValidLocalePreference` を i18n から import。
+
+4. **`interpolate()` の placeholder regex を named-only に絞る** ([src/i18n/index.tsx:103](src/i18n/index.tsx))
+   現状: `\{(\w+)\}` は `{0}` を許容する (ICU positional に紛らわしい)。
+   対処: `[a-zA-Z]` 始まりに絞る or docs に「named only」と明記。
+
+### View Transitions (中優先度)
+
+5. **retry の VT 意味論を明確化** ([src/stores/queueStore.ts:289-305](src/stores/queueStore.ts), [src/components/QueueItem.tsx:121](src/components/QueueItem.tsx))
+   現状: retry は同じ `id` を保つので `viewTransitionName: queue-item-${id}` が VT API では morph 扱いされ、`::view-transition-new(*):only-child` の slide-in は走らない。
+   対処 A: status flip だけアニメさせたいなら CSS で `[data-status="queued"]` の enter アニメに切り替え。
+   対処 B: 「再投入感」を出したいなら `viewTransitionName` を `queue-item-${id}-${retryCount}` にして retry のたびに変える。
+
+6. **`viewTransitionName` 衝突防御 (tiebreaker)** ([src/components/QueueItem.tsx:121](src/components/QueueItem.tsx))
+   現状: `viewTransitionName: queue-item-${id}` で UUID 衝突は実質ゼロだが、テスト fixture でハードコード id 使用時に warning。
+   対処: `queue-item-${id}-${addedAt}` で tiebreaker (1 行)。
+
+7. **VT 不在 + Reduced Motion ON のテスト追加** ([src/lib/viewTransition.test.ts](src/lib/viewTransition.test.ts))
+   現状: 2 つの fallback 条件 (`||`) を別々にカバーしているが、両方 true の挙動テストなし。
+   対処: 1 件追加で regression に強くなる。
+
+8. **`::view-transition-group(*)` の root duration 不整合** ([src/index.css:133-153](src/index.css))
+   現状: root group は 0.3s、old/new は 0.2s で 100ms のズレ。視覚影響ほぼなし。
+   対処: `::view-transition-group(root) { animation-duration: 0.2s }` 明示。
+
+### SettingsSheet UX (中優先度)
+
+9. **drag-to-dismiss target を header 全体に拡大** ([src/components/SettingsSheet.tsx:253-260](src/components/SettingsSheet.tsx))
+   現状: 40×6px の小さい handle のみ。iOS native sheet は header 行全体を drag できる。
+   対処: handle + title + close button area に touch handlers を移動、`delta > 8px` debounce で close 誤発火を防ぐ。
+
+10. **「自動」が現在解決された locale を表示** ([src/components/SettingsSheet.tsx:214-221](src/components/SettingsSheet.tsx))
+    現状: 静的に `t('settings.language.auto')` (= `'自動 (デバイス設定に従う)'`)。
+    対処: `useI18n().locale` を補間して `'自動 (現在: English)'`-style に。混合言語環境のユーザの安心感が上がる。
+
+11. **storage bar の色を >80%/>95% で変える** ([src/components/SettingsSheet.tsx:209](src/components/SettingsSheet.tsx))
+    現状: 常に `bg-[var(--accent)]`。iOS Settings → General → iPhone Storage は黄→赤に。
+    対処: 2 個の ternary で `bg-[var(--warning)]` / `bg-[var(--error)]` を出し分け。
+
+12. **`settingsStore.init()` write-back の payload coupling を解消** ([src/stores/settingsStore.ts:136-141](src/stores/settingsStore.ts))
+    現状: 4 箇所 (init / setPreset / dismissCameraTip / setLanguage) で同じ 3-field literal を repeat。新 field 追加時にずれる risk。
+    対処: `currentPersisted()` helper を抽出。
+
+### Icons / Build (低優先度)
+
+13. **`generate-icons.mjs` の SVG width 正規表現を DOM mutation に置換** ([scripts/generate-icons.mjs:30-32](scripts/generate-icons.mjs))
+    現状: `svg.replace(/width="\d+"/, ...)`。SVG が `width="100%"` や属性順変更で silently 破綻。
+    対処: `<svg>` の `setAttribute('width', '100vw')` を page context 内で実行。
+
+14. **`generate-icons.mjs` の決定性 smoke test を CI に追加**
+    現状: 同じ SVG → 同じ PNG の保証は Playwright/chromium のバージョン依存で隠れている。
+    対処: CI でアイコン生成を 2 回走らせて diff、byte-identical を確認。anti-aliasing regression を検出。
