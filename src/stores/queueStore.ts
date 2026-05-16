@@ -403,7 +403,10 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       return { kind: 'failed-multi', error: 'no done items' };
     }
 
-    // OPFS から並列に読み出し。1 件でも成功すれば残りで share、全件失敗なら failed-multi。
+    // OPFS から並列に読み出し → arrayBuffer() で即時メモリに buffer して
+    // 後続の remove()/clearCompleted() による OPFS 削除レースを防ぐ
+    // (Adversarial review #4: readFromOpfs は File reference を返すだけで data は lazy
+    //  読込み、share() 中に remove() で消されると iOS Photos に空ファイルが行く)。
     type ReadOk = { ok: true; blob: Blob; fileName: string };
     type ReadFail = { ok: false; error: string };
     const reads: Array<ReadOk | ReadFail> = await Promise.all(
@@ -413,9 +416,12 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
         }
         try {
           const file = await readFromOpfs(item.outputOpfsPath);
+          // 即時 arrayBuffer 読込みでメモリにコピー → これ以降 OPFS 削除されても OK
+          const buffer = await file.arrayBuffer();
+          const blob = new Blob([buffer], { type: file.type || 'video/mp4' });
           return {
             ok: true,
-            blob: file,
+            blob,
             fileName: deriveShareFileName(item.fileName),
           };
         } catch (err) {

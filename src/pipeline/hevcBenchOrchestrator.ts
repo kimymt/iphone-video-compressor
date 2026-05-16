@@ -54,17 +54,33 @@ export interface RunAndPersistDeps {
   setHevcBenchSlowdown?: (value: boolean | null) => Promise<void>;
 }
 
+/** 進行中の bench (manual + auto 共通の lock)。同時に複数の bench が走ると iPhone で
+ *  VideoToolbox に最大 6 並列 encoder (3 ctor × 2 instance) が突っ込まれて crash する。
+ *  Adversarial review #8: 旧実装は maybeAutoRunHevcBench だけが lock を持ち、
+ *  SettingsSheet からの直接呼び出し (runAndPersistHevcBench) は素通り、結果として
+ *  double-tap で 2 並列の bench が走り得た。 */
+let inFlight: Promise<HevcBenchResult> | null = null;
+
 /** bench を実行して、結果を両 store + 永続化層に書き込む。
  *
  *  失敗ケース:
  *    - HevcBenchAbortError → re-throw (caller 側で 'cancelled' UX を出すため)
  *    - その他の bench Error → re-throw (caller 側で toast 出す等)、store は更新しない
+ *    - 既に bench が進行中 → 進行中の promise を返す (caller は単に await すれば良い、
+ *      double-tap の場合 2 つの caller が同じ結果を受け取る)
  *
  *  返り値: bench の結果 (caller が UI 表示に使える)。 */
 export async function runAndPersistHevcBench(
   options: HevcBenchOptions = {},
   deps: RunAndPersistDeps = {},
 ): Promise<HevcBenchResult> {
+  // Adversarial review #8: 進行中の bench があれば、その promise を返す
+  // (2 並列 bench で VideoToolbox crash を防ぐ)。caller 同士が独立した
+  // settle 経路を持つよう .then で chain (両 caller の finally や catch が独立に動く)。
+  if (inFlight !== null) {
+    return inFlight;
+  }
+
   const bench = deps.bench ?? runHevcParallelismBench;
   const setHevcBench =
     deps.setHevcBench ?? ((r: HevcBenchResult | null) => useSettingsStore.getState().setHevcBench(r));
@@ -72,17 +88,22 @@ export async function runAndPersistHevcBench(
     deps.setHevcBenchSlowdown ??
     ((v: boolean | null) => useQueueStore.getState().setHevcBenchSlowdown(v));
 
-  const result = await bench(options);
-  // bench 成功 → 両 store を更新
-  setHevcBench(result);
-  await setHevcBenchSlowdown(result.slowdown);
-  return result;
+  const promise = (async (): Promise<HevcBenchResult> => {
+    const result = await bench(options);
+    setHevcBench(result);
+    await setHevcBenchSlowdown(result.slowdown);
+    return result;
+  })().finally(() => {
+    inFlight = null;
+  });
+  inFlight = promise;
+  return promise;
 }
 
 /** 自動実行のエントリポイント。App.tsx の useEffect から呼ぶ。
  *  - envCheck.hevcEncode が false なら skip
  *  - shouldRunBench(record) が false なら skip
- *  - 既に bench が走っている (進行中 promise が module-level に残っている) なら skip
+ *  - 既に bench が走っている (runAndPersistHevcBench の inFlight) なら skip
  *  - 失敗は console.warn のみ (致命的でない、次回起動で再試行)
  *
  *  返り値:
@@ -91,8 +112,6 @@ export async function runAndPersistHevcBench(
 export type AutoRunResult =
   | { status: 'started'; promise: Promise<HevcBenchResult> }
   | { status: 'skipped'; reason: 'hevc-unsupported' | 'fresh' | 'in-flight' };
-
-let inFlight: Promise<HevcBenchResult> | null = null;
 
 export function maybeAutoRunHevcBench(
   envCheck: { hevcEncode: boolean },
@@ -105,21 +124,16 @@ export function maybeAutoRunHevcBench(
   if (inFlight !== null) return { status: 'skipped', reason: 'in-flight' };
   if (!shouldRunBench(currentRecord, now)) return { status: 'skipped', reason: 'fresh' };
 
-  const promise = runAndPersistHevcBench(options, deps)
-    .catch((err) => {
-      if (err instanceof HevcBenchAbortError) {
-        // cancel は失敗扱いしない (再試行は次回起動で)
-        throw err;
-      }
-      // それ以外の失敗はログだけ残して swallow (致命的でない)
-      // eslint-disable-next-line no-console
-      console.warn('[hevcBench] auto-run failed:', err);
+  // runAndPersistHevcBench が unified lock を管理する。
+  // 失敗時は console.warn してから re-throw (caller 側で .catch(()=>{}) する想定)。
+  const promise = runAndPersistHevcBench(options, deps).catch((err) => {
+    if (err instanceof HevcBenchAbortError) {
       throw err;
-    })
-    .finally(() => {
-      inFlight = null;
-    });
-  inFlight = promise;
+    }
+    // eslint-disable-next-line no-console
+    console.warn('[hevcBench] auto-run failed:', err);
+    throw err;
+  });
   return { status: 'started', promise };
 }
 
