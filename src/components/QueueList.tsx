@@ -4,10 +4,15 @@
 // 空状態は EmptyState (Video icon + 案内テキスト)。
 // addedAt 昇順でソートして表示 (古い順)。
 // V2: i18n 化 (空状態テキスト / 削除ボタン / aria を t() 経由)。
+// V2: 「完了をすべて保存」ボタン追加 (done が 1 件以上のとき、Share Sheet で
+//      一括「写真に保存」できる、1 タップ UX)。文言は「保存」で統一 (ユーザの
+//      メンタルモデル: Share Sheet を経由するが意図は写真への保存)。
 
-import { Video, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Video, Trash2, Share } from 'lucide-react';
 import QueueItemRow from './QueueItem';
 import { useQueueStore } from '../stores/queueStore';
+import { useToastStore } from '../stores/toastStore';
 import { useT } from '../i18n';
 import type { QueueItem } from '../lib/types';
 
@@ -19,8 +24,41 @@ const TERMINAL_STATUSES: ReadonlyArray<QueueItem['status']> = ['done', 'failed',
 
 export default function QueueList({ items }: QueueListProps) {
   const clearCompleted = useQueueStore((s) => s.clearCompleted);
+  const shareAllDone = useQueueStore((s) => s.shareAllDone);
   const t = useT();
   const sorted = [...items].sort((a, b) => a.addedAt - b.addedAt);
+  /** V2: 一括保存中フラグ。連打防止 + ボタン disable。 */
+  const [savingAll, setSavingAll] = useState(false);
+
+  const handleSaveAll = async (): Promise<void> => {
+    if (savingAll) return;
+    setSavingAll(true);
+    try {
+      const result = await shareAllDone();
+      const toast = useToastStore.getState();
+      switch (result.kind) {
+        case 'shared':
+          // iOS Share Sheet 自体が成功 UI を出す (「写真に保存しました」等)
+          return;
+        case 'cancelled':
+          toast.show(t('share.saveAllCancelled'), { kind: 'info' });
+          return;
+        case 'failed-multi':
+          // done 0 件 / 全 read 失敗 / canShare=false / share 失敗 → 個別保存に誘導
+          if (result.error === 'no done items') {
+            toast.show(t('share.saveAllNoneAvailable'), { kind: 'info' });
+          } else {
+            toast.show(t('share.saveAllFailedMulti'), { kind: 'error' });
+          }
+          return;
+        case 'failed':
+          toast.show(t('share.failed', { error: result.error }), { kind: 'error' });
+          return;
+      }
+    } finally {
+      setSavingAll(false);
+    }
+  };
 
   if (sorted.length === 0) {
     return (
@@ -37,23 +75,41 @@ export default function QueueList({ items }: QueueListProps) {
   }
 
   const terminalCount = sorted.filter((i) => TERMINAL_STATUSES.includes(i.status)).length;
+  const doneCount = sorted.filter((i) => i.status === 'done').length;
 
   return (
     <div className="flex flex-col">
-      {terminalCount > 0 && (
-        <div className="flex items-center justify-end py-2">
-          <button
-            type="button"
-            onClick={() => {
-              void clearCompleted();
-            }}
-            data-testid="clear-completed"
-            className="flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
-            aria-label={t('queueList.clearAllAria', { count: terminalCount })}
-          >
-            <Trash2 size={14} aria-hidden="true" />
-            <span>{t('queueList.clearAllCta', { count: terminalCount })}</span>
-          </button>
+      {(terminalCount > 0 || doneCount > 0) && (
+        <div className="flex flex-wrap items-center justify-end gap-2 py-2">
+          {doneCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                void handleSaveAll();
+              }}
+              disabled={savingAll}
+              data-testid="save-all-done"
+              className="flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--accent)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
+              aria-label={t('queueList.saveAllAria', { count: doneCount })}
+            >
+              <Share size={14} aria-hidden="true" />
+              <span>{t('queueList.saveAllCta', { count: doneCount })}</span>
+            </button>
+          )}
+          {terminalCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                void clearCompleted();
+              }}
+              data-testid="clear-completed"
+              className="flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              aria-label={t('queueList.clearAllAria', { count: terminalCount })}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              <span>{t('queueList.clearAllCta', { count: terminalCount })}</span>
+            </button>
+          )}
         </div>
       )}
       <ul

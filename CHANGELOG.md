@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — V2: 完了動画のバルク保存
+
+- **「完了をすべて保存 ({N})」ボタン** in QueueList — 圧縮完了動画を 1 タップで Share Sheet に渡し、「写真に保存」を 1 回タップで全件一括保存。従来は N 件保存に 2N タップ (個別「共有」→「写真に保存」) だったのが、**2 タップ固定** (バルク保存ボタン → 写真に保存) に短縮。
+  - **`src/platform/share.ts`** に `shareFiles(blobs[], fileNames[])` 追加 — 合計サイズ 1GB ガード、`canShare({files})` 検証、AbortError = cancelled、それ以外 = `failed-multi` で個別保存に誘導
+  - **`queueStore.shareAllDone()`** action — `status === 'done'` 全件の OPFS 出力を並列 read → shareFiles。1 件でも read 成功すれば残りで share、全件失敗のみ `failed-multi`
+  - **`deriveShareFileName`** を ShareButton.tsx から share.ts に移動 (バルクでも使うため、ShareButton では re-export で後方互換維持)
+  - **QueueList UI** — 既存「完了をすべて削除」の左に並ぶ `Share` icon ボタン、done 件数 > 0 のときのみ表示、実行中 disable
+  - **文言は「保存」で統一** (ユーザのメンタルモデルが Share Sheet ではなく Photos への保存のため):
+    - ボタン: `完了をすべて保存 ({N})`
+    - cancelled: `保存がキャンセルされました`
+    - failed-multi: `保存に失敗しました、個別に保存してください`
+    - no-done: `保存できる動画がありません`
+- **i18n 5 言語** に `queueList.saveAllAria`/`saveAllCta` + `share.saveAllCancelled`/`saveAllFailedMulti`/`saveAllNoneAvailable` を追加
+
 ### Added — V2: HEVC 並列ベンチマーク
 
 - **HEVC parallel encode bench** — VideoToolbox の単一 HW エンコーダ制約 (CLAUDE.md ハマりどころ 17) を実測で検出して、`queueStore.effectiveParallelism()` が HEVC プリセットの並列度を 1 に動的降格できるようにした。
@@ -28,13 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### テスト
 
-- Vitest: **540 / 540** (v1.1.0 出荷時 483 → +57 件)
+- Vitest: **562 / 562** (v1.1.0 出荷時 483 → +79 件)
   - `hevcBench.test.ts` 20 件 — speedup 数式 / slowdown 境界 / encoder lifecycle / AbortSignal / 環境不在
   - `hevcBenchOrchestrator.test.ts` 17 件 — shouldRunBench / runAndPersistHevcBench / maybeAutoRunHevcBench
   - `settingsStore.test.ts` +5 件 — setHevcBench / localStorage 復元 / 壊れた record 正規化
-  - `queueStore.test.ts` +3 件 — setHevcBenchSlowdown / IndexedDB 永続化
+  - `queueStore.test.ts` +11 件 — setHevcBenchSlowdown / IndexedDB 永続化 / shareAllDone (空 / 混在 / OPFS 失敗 / canShare=false / cancelled)
   - `SettingsSheet.test.tsx` +5 件 — bench セクション表示分岐 / 実行クリック
   - `format.test.ts` +7 件 — `formatRelativeTime` (ja / en で出力検証)
+  - `share.test.ts` +9 件 — shareFiles (空 / 長さ不一致 / 1GB 超 / canShare 未実装 / canShare=false / 成功 / AbortError / 他 error / sanitize)
+  - `QueueList.test.tsx` +5 件 — save-all-done 表示分岐 / 件数 / shareAllDone 呼び出し / DOM 順
 - Playwright: 既存 42/42 を維持 (本機能は手動 E2E 検証、ベンチ実行は実機 VideoEncoder を要するため)
 - `tsc -b`: clean
 

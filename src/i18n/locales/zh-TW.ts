@@ -60,6 +60,8 @@ export const zhTW: Messages = {
     aria: '壓縮佇列',
     clearAllAria: '清除所有 {count} 個已完成項目',
     clearAllCta: '清除已完成 ({count})',
+    saveAllAria: '儲存所有 {count} 個已完成項目',
+    saveAllCta: '全部儲存 ({count})',
   },
 
   wakeLock: {
@@ -161,6 +163,9 @@ export const zhTW: Messages = {
     cancelled: '已取消分享',
     failed: '分享失敗: {error}',
     readFailed: '讀取輸出檔案失敗: {error}',
+    saveAllCancelled: '已取消儲存',
+    saveAllFailedMulti: '儲存失敗,請逐一儲存',
+    saveAllNoneAvailable: '沒有可儲存的影片',
   },
 
   toast: {

@@ -60,6 +60,8 @@ export const en: Messages = {
     aria: 'Compression queue',
     clearAllAria: 'Clear all {count} completed items',
     clearAllCta: 'Clear completed ({count})',
+    saveAllAria: 'Save all {count} completed items',
+    saveAllCta: 'Save all completed ({count})',
   },
 
   wakeLock: {
@@ -159,6 +161,9 @@ export const en: Messages = {
     cancelled: 'Share cancelled',
     failed: 'Share failed: {error}',
     readFailed: 'Failed to read output file: {error}',
+    saveAllCancelled: 'Save cancelled',
+    saveAllFailedMulti: 'Save failed — please save individually',
+    saveAllNoneAvailable: 'No videos available to save',
   },
 
   toast: {

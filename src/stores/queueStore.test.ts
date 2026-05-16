@@ -818,4 +818,193 @@ describe('queueStore', () => {
       expect(useQueueStore.getState().hevcBenchSlowdown).toBe(true);
     });
   });
+
+  describe('V2: shareAllDone() (バルク保存)', () => {
+    let originalShare: typeof navigator.share | undefined;
+    let originalCanShare: typeof navigator.canShare | undefined;
+
+    beforeEach(async () => {
+      await useQueueStore.getState().init();
+      originalShare = navigator.share;
+      originalCanShare = navigator.canShare;
+    });
+
+    afterEach(() => {
+      if (originalShare === undefined) {
+        delete (navigator as unknown as { share?: unknown }).share;
+      } else {
+        (navigator as unknown as { share?: unknown }).share = originalShare;
+      }
+      if (originalCanShare === undefined) {
+        delete (navigator as unknown as { canShare?: unknown }).canShare;
+      } else {
+        (navigator as unknown as { canShare?: unknown }).canShare = originalCanShare;
+      }
+    });
+
+    /** done アイテムを直接 IndexedDB に seed + OPFS に出力ファイルを作る。 */
+    async function seedDone(id: string, fileName: string, content = 'output-bytes'): Promise<void> {
+      await saveQueueItem(
+        makeItem(id, 'done', {
+          fileName,
+          progress: 100,
+          finishedAt: Date.now(),
+          outputOpfsPath: `outputs/${id}.mp4`,
+          outputSize: content.length,
+        }),
+      );
+      const w = await getOpfsWritable(`outputs/${id}.mp4`);
+      await w.write(content);
+      await w.close();
+    }
+
+    it('done が 0 件: failed-multi (no done items)', async () => {
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('failed-multi');
+      if (r.kind === 'failed-multi') {
+        expect(r.error).toMatch(/no done items/);
+      }
+    });
+
+    it('done 3 件: navigator.share に files 3 件で 1 回だけ呼ばれる', async () => {
+      let capturedFiles: File[] | undefined;
+      const shareSpy = vi.fn(async (data: ShareData) => {
+        capturedFiles = data.files !== undefined ? Array.from(data.files) : undefined;
+      });
+      (navigator as unknown as { canShare: () => boolean }).canShare = () => true;
+      (navigator as unknown as { share: typeof shareSpy }).share = shareSpy;
+
+      await seedDone('a', 'IMG_001.mov');
+      await seedDone('b', 'IMG_002.mov');
+      await seedDone('c', 'IMG_003.mov');
+      // store の items を再読込
+      await useQueueStore.getState().init(); // initialized=true なので no-op、後で setState
+      useQueueStore.setState({
+        items: [
+          makeItem('a', 'done', { fileName: 'IMG_001.mov', outputOpfsPath: 'outputs/a.mp4', outputSize: 12 }),
+          makeItem('b', 'done', { fileName: 'IMG_002.mov', outputOpfsPath: 'outputs/b.mp4', outputSize: 12 }),
+          makeItem('c', 'done', { fileName: 'IMG_003.mov', outputOpfsPath: 'outputs/c.mp4', outputSize: 12 }),
+        ],
+      });
+
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('shared');
+      expect(shareSpy).toHaveBeenCalledTimes(1);
+      expect(capturedFiles).toHaveLength(3);
+      // deriveShareFileName が `_compressed.mp4` を付与
+      expect(capturedFiles?.map((f) => f.name)).toEqual([
+        'IMG_001_compressed.mp4',
+        'IMG_002_compressed.mp4',
+        'IMG_003_compressed.mp4',
+      ]);
+    });
+
+    it('done と他 status が混在: done のみが share される', async () => {
+      const shareSpy = vi.fn(async (_data: ShareData) => undefined);
+      (navigator as unknown as { canShare: () => boolean }).canShare = () => true;
+      (navigator as unknown as { share: typeof shareSpy }).share = shareSpy;
+
+      await seedDone('done1', 'IMG_001.mov');
+      useQueueStore.setState({
+        items: [
+          makeItem('queued1', 'queued', { fileName: 'pending.mov' }),
+          makeItem('done1', 'done', { fileName: 'IMG_001.mov', outputOpfsPath: 'outputs/done1.mp4', outputSize: 12 }),
+          makeItem('failed1', 'failed', { fileName: 'broken.mov', error: 'x' }),
+        ],
+      });
+
+      await useQueueStore.getState().shareAllDone();
+      expect(shareSpy).toHaveBeenCalledTimes(1);
+      const arg = shareSpy.mock.calls[0]?.[0];
+      expect(arg).toBeDefined();
+      expect(arg?.files).toHaveLength(1);
+      expect(arg?.files?.[0]?.name).toBe('IMG_001_compressed.mp4');
+    });
+
+    it('OPFS 読み出し失敗のアイテムは skip、残りで share', async () => {
+      const shareSpy = vi.fn(async (_data: ShareData) => undefined);
+      (navigator as unknown as { canShare: () => boolean }).canShare = () => true;
+      (navigator as unknown as { share: typeof shareSpy }).share = shareSpy;
+
+      // only seed 'good', 'bad' の output は OPFS に無い (= readFromOpfs throw)
+      await seedDone('good', 'good.mov');
+      useQueueStore.setState({
+        items: [
+          makeItem('good', 'done', { fileName: 'good.mov', outputOpfsPath: 'outputs/good.mp4', outputSize: 12 }),
+          makeItem('bad', 'done', { fileName: 'bad.mov', outputOpfsPath: 'outputs/missing.mp4', outputSize: 12 }),
+        ],
+      });
+
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('shared');
+      const arg = shareSpy.mock.calls[0]?.[0];
+      expect(arg).toBeDefined();
+      expect(arg?.files).toHaveLength(1);
+      expect(arg?.files?.[0]?.name).toBe('good_compressed.mp4');
+    });
+
+    it('全件 OPFS 読み出し失敗 → failed-multi (all reads failed)', async () => {
+      (navigator as unknown as { canShare: () => boolean }).canShare = () => true;
+      (navigator as unknown as { share: () => Promise<void> }).share = vi.fn(async () => undefined);
+
+      useQueueStore.setState({
+        items: [
+          makeItem('a', 'done', { fileName: 'a.mov', outputOpfsPath: 'outputs/missing-a.mp4', outputSize: 12 }),
+          makeItem('b', 'done', { fileName: 'b.mov', outputOpfsPath: 'outputs/missing-b.mp4', outputSize: 12 }),
+        ],
+      });
+
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('failed-multi');
+      if (r.kind === 'failed-multi') {
+        expect(r.error).toMatch(/all reads failed/);
+      }
+    });
+
+    it('outputOpfsPath が空文字 (= done 後の input 削除目印と被らない、ここは output 不在扱い)', async () => {
+      // status='done' で outputOpfsPath が undefined のケース
+      useQueueStore.setState({
+        items: [
+          makeItem('a', 'done', { fileName: 'a.mov', outputOpfsPath: undefined, outputSize: 12 }),
+        ],
+      });
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('failed-multi');
+      if (r.kind === 'failed-multi') {
+        expect(r.error).toMatch(/all reads failed: no outputOpfsPath/);
+      }
+    });
+
+    it('canShare=false → failed-multi (個別保存に誘導)', async () => {
+      (navigator as unknown as { canShare: () => boolean }).canShare = () => false;
+      (navigator as unknown as { share: () => Promise<void> }).share = vi.fn(async () => undefined);
+
+      await seedDone('a', 'a.mov');
+      useQueueStore.setState({
+        items: [
+          makeItem('a', 'done', { fileName: 'a.mov', outputOpfsPath: 'outputs/a.mp4', outputSize: 12 }),
+        ],
+      });
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('failed-multi');
+    });
+
+    it('AbortError → cancelled (個別保存に誘導しない)', async () => {
+      const abort = new Error('user cancelled');
+      abort.name = 'AbortError';
+      (navigator as unknown as { canShare: () => boolean }).canShare = () => true;
+      (navigator as unknown as { share: () => Promise<void> }).share = vi.fn(async () => {
+        throw abort;
+      });
+
+      await seedDone('a', 'a.mov');
+      useQueueStore.setState({
+        items: [
+          makeItem('a', 'done', { fileName: 'a.mov', outputOpfsPath: 'outputs/a.mp4', outputSize: 12 }),
+        ],
+      });
+      const r = await useQueueStore.getState().shareAllDone();
+      expect(r.kind).toBe('cancelled');
+    });
+  });
 });

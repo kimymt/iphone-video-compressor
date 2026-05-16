@@ -5,7 +5,7 @@
 // - downloadFallback: <a download> click のサイドエフェクト確認
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { shareFile, sanitizeFileName, downloadFallback, _internal } from './share';
+import { shareFile, shareFiles, sanitizeFileName, downloadFallback, _internal } from './share';
 
 const SIZE_LIMIT = _internal.SHARE_SIZE_LIMIT_BYTES;
 
@@ -167,6 +167,116 @@ describe('shareFile', () => {
     const blob = new Blob(['x'], { type: 'video/mp4' });
     await shareFile(blob, 'a:b/c\\d.mp4');
     expect(captured?.name).toBe('a_b_c_d.mp4');
+  });
+
+  // ---- V2: shareFiles (バルク保存) ----
+
+  describe('shareFiles (V2 bulk save)', () => {
+    function makeBlob(size = 1000): Blob {
+      const b = new Blob(['x'], { type: 'video/mp4' });
+      Object.defineProperty(b, 'size', { value: size, configurable: true });
+      return b;
+    }
+
+    it('空配列は failed-multi (no files to share)', async () => {
+      const result = await shareFiles([], []);
+      expect(result.kind).toBe('failed-multi');
+      if (result.kind === 'failed-multi') {
+        expect(result.error).toMatch(/no files/);
+      }
+    });
+
+    it('blobs と fileNames の長さ不一致は failed-multi', async () => {
+      const result = await shareFiles([makeBlob(), makeBlob()], ['a.mp4']);
+      expect(result.kind).toBe('failed-multi');
+      if (result.kind === 'failed-multi') {
+        expect(result.error).toMatch(/length mismatch/);
+      }
+    });
+
+    it('合計サイズ 1GB 超は failed-multi (個別保存に誘導)', async () => {
+      const big = makeBlob(SIZE_LIMIT / 2 + 1);
+      const big2 = makeBlob(SIZE_LIMIT / 2 + 1);
+      const result = await shareFiles([big, big2], ['a.mp4', 'b.mp4']);
+      expect(result.kind).toBe('failed-multi');
+      if (result.kind === 'failed-multi') {
+        expect(result.error).toMatch(/total size .* exceeds/);
+      }
+    });
+
+    it('canShare 未実装は failed-multi', async () => {
+      setShareApis({});
+      const result = await shareFiles([makeBlob()], ['a.mp4']);
+      expect(result.kind).toBe('failed-multi');
+    });
+
+    it('canShare(files: [...]) が false → failed-multi', async () => {
+      setShareApis({ canShare: () => false, share: vi.fn(async () => undefined) });
+      const result = await shareFiles([makeBlob(), makeBlob()], ['a.mp4', 'b.mp4']);
+      expect(result.kind).toBe('failed-multi');
+      if (result.kind === 'failed-multi') {
+        expect(result.error).toMatch(/canShare/);
+      }
+    });
+
+    it('share 成功 → kind: shared (1 回呼び出し、files 配列で複数件)', async () => {
+      let capturedFiles: File[] | undefined;
+      const shareSpy = vi.fn(async (data: ShareData) => {
+        capturedFiles = data.files !== undefined ? Array.from(data.files) : undefined;
+      });
+      setShareApis({ canShare: () => true, share: shareSpy });
+      const result = await shareFiles(
+        [makeBlob(), makeBlob(), makeBlob()],
+        ['a.mp4', 'b.mp4', 'c.mp4'],
+      );
+      expect(result).toEqual({ kind: 'shared' });
+      expect(shareSpy).toHaveBeenCalledTimes(1);
+      expect(capturedFiles).toHaveLength(3);
+      expect(capturedFiles?.map((f) => f.name)).toEqual(['a.mp4', 'b.mp4', 'c.mp4']);
+    });
+
+    it('share AbortError → kind: cancelled (個別保存に誘導しない)', async () => {
+      const abort = new Error('user cancelled');
+      abort.name = 'AbortError';
+      setShareApis({
+        canShare: () => true,
+        share: vi.fn(async () => {
+          throw abort;
+        }),
+      });
+      const result = await shareFiles([makeBlob()], ['a.mp4']);
+      expect(result).toEqual({ kind: 'cancelled' });
+    });
+
+    it('share の AbortError 以外のエラー → failed-multi (個別保存に誘導)', async () => {
+      setShareApis({
+        canShare: () => true,
+        share: vi.fn(async () => {
+          throw new Error('permission denied');
+        }),
+      });
+      const result = await shareFiles([makeBlob()], ['a.mp4']);
+      expect(result.kind).toBe('failed-multi');
+      if (result.kind === 'failed-multi') {
+        expect(result.error).toMatch(/permission denied/);
+      }
+    });
+
+    it('fileName が全件 sanitize されて File に変換される', async () => {
+      let capturedFiles: File[] | undefined;
+      setShareApis({
+        canShare: (data) => {
+          capturedFiles = data.files !== undefined ? Array.from(data.files) : undefined;
+          return true;
+        },
+        share: vi.fn(async () => undefined),
+      });
+      await shareFiles(
+        [makeBlob(), makeBlob()],
+        ['a:b/c.mp4', 'normal.mp4'],
+      );
+      expect(capturedFiles?.map((f) => f.name)).toEqual(['a_b_c.mp4', 'normal.mp4']);
+    });
   });
 
   it('downloadFallback は a.download に sanitized 名を設定', () => {

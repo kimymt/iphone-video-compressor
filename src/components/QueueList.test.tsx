@@ -2,7 +2,7 @@
 // Phase 4c: terminal アイテムがあるときに「完了をすべて削除」ボタンが表示される。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import QueueList from './QueueList';
 import { useQueueStore } from '../stores/queueStore';
 import type { QueueItem } from '../lib/types';
@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.spyOn(useQueueStore.getState(), 'remove').mockResolvedValue(undefined);
   vi.spyOn(useQueueStore.getState(), 'retry').mockResolvedValue(undefined);
   vi.spyOn(useQueueStore.getState(), 'clearCompleted').mockResolvedValue(undefined);
+  vi.spyOn(useQueueStore.getState(), 'shareAllDone').mockResolvedValue({ kind: 'shared' });
 });
 
 afterEach(() => {
@@ -155,5 +156,79 @@ describe('QueueList — 完了をすべて削除ボタン (Phase 4c)', () => {
     );
     const btn = screen.getByTestId('clear-completed');
     expect(btn).toHaveAttribute('aria-label', '完了したアイテム 2 件をすべて削除');
+  });
+});
+
+describe('QueueList — V2: 完了をすべて保存ボタン', () => {
+  it('done が 0 件なら保存ボタンは表示しない (failed/cancelled だけでは出さない)', () => {
+    render(
+      <QueueList
+        items={[
+          makeItem('q', 'queued', 1),
+          makeItem('f', 'failed', 2),
+          makeItem('c', 'cancelled', 3),
+        ]}
+      />,
+    );
+    expect(screen.queryByTestId('save-all-done')).toBeNull();
+    // 削除ボタンは出る (failed + cancelled = 2 件)
+    expect(screen.getByTestId('clear-completed')).toBeInTheDocument();
+  });
+
+  it('done が 1 件以上で保存ボタン表示 + 件数', () => {
+    render(
+      <QueueList
+        items={[
+          makeItem('d1', 'done', 1),
+          makeItem('d2', 'done', 2),
+          makeItem('f', 'failed', 3),
+        ]}
+      />,
+    );
+    const btn = screen.getByTestId('save-all-done');
+    expect(btn).toBeInTheDocument();
+    // done だけカウント (failed は含めない)
+    expect(btn).toHaveTextContent('完了をすべて保存 (2)');
+  });
+
+  it('保存ボタンタップで shareAllDone() が呼ばれる', async () => {
+    const spy = vi.spyOn(useQueueStore.getState(), 'shareAllDone');
+    render(<QueueList items={[makeItem('d', 'done', 1)]} />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('save-all-done'));
+      // finally の setSavingAll(false) が flush するまで待つ
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('aria-label に done 件数', () => {
+    render(
+      <QueueList
+        items={[
+          makeItem('d1', 'done', 1),
+          makeItem('d2', 'done', 2),
+          makeItem('d3', 'done', 3),
+        ]}
+      />,
+    );
+    expect(screen.getByTestId('save-all-done')).toHaveAttribute(
+      'aria-label',
+      '完了したアイテム 3 件をすべて保存',
+    );
+  });
+
+  it('保存ボタンは削除ボタンより先 (左) に並ぶ', () => {
+    render(
+      <QueueList
+        items={[makeItem('d', 'done', 1), makeItem('f', 'failed', 2)]}
+      />,
+    );
+    const saveBtn = screen.getByTestId('save-all-done');
+    const clearBtn = screen.getByTestId('clear-completed');
+    // DOM 順で save が先
+    const cmp = saveBtn.compareDocumentPosition(clearBtn);
+    expect(cmp & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

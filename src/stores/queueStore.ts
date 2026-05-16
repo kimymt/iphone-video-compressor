@@ -5,7 +5,17 @@
 
 import { create } from 'zustand';
 import type { QueueItem, PresetKey, Preset } from '../lib/types';
-import { writeInputToOpfs, deleteFromOpfs, outputPath } from '../db/opfs';
+import {
+  writeInputToOpfs,
+  deleteFromOpfs,
+  readFromOpfs,
+  outputPath,
+} from '../db/opfs';
+import {
+  shareFiles,
+  deriveShareFileName,
+  type ShareFilesResult,
+} from '../platform/share';
 import {
   loadAllQueueItems,
   saveQueueItem,
@@ -99,6 +109,13 @@ export type QueueStoreActions = {
    *  orchestrator (runAndPersistHevcBench) が bench 完了時に呼ぶ。
    *  null を渡すと未計測扱いに戻す (テスト/設定リセット用)。 */
   setHevcBenchSlowdown: (value: boolean | null) => Promise<void>;
+  /** V2: status='done' な全アイテムの出力を OPFS から読み出して 1 回の Share Sheet
+   *  でまとめて保存する。ユーザは「写真に保存」を 1 タップで全件取り込み。
+   *  - done が 0 件のときは `{ kind: 'failed-multi', error: 'no done items' }`
+   *  - OPFS 読み出し失敗のアイテムは skip し、残りで shareFiles を呼ぶ
+   *    (全件 read 失敗なら 'failed-multi')
+   *  - 合計サイズ 1GB 超や canShare=false は shareFiles 内で failed-multi 判定 */
+  shareAllDone: () => Promise<ShareFilesResult>;
   /**
    * 'queued' なアイテムを並列度の上限まで起動する。
    * 並列度は effectiveParallelism(preset) で per-preset に決まる。
@@ -378,6 +395,49 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     await setSetting('hevcBenchSlowdown', value).catch(() => {});
     // 並列度が変わったかもしれないので、queued アイテムがあれば再評価して起動
     get().processNext();
+  },
+
+  async shareAllDone() {
+    const dones = get().items.filter((i) => i.status === 'done');
+    if (dones.length === 0) {
+      return { kind: 'failed-multi', error: 'no done items' };
+    }
+
+    // OPFS から並列に読み出し。1 件でも成功すれば残りで share、全件失敗なら failed-multi。
+    type ReadOk = { ok: true; blob: Blob; fileName: string };
+    type ReadFail = { ok: false; error: string };
+    const reads: Array<ReadOk | ReadFail> = await Promise.all(
+      dones.map(async (item): Promise<ReadOk | ReadFail> => {
+        if (!item.outputOpfsPath) {
+          return { ok: false, error: 'no outputOpfsPath' };
+        }
+        try {
+          const file = await readFromOpfs(item.outputOpfsPath);
+          return {
+            ok: true,
+            blob: file,
+            fileName: deriveShareFileName(item.fileName),
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }),
+    );
+
+    const okReads = reads.filter((r): r is ReadOk => r.ok);
+    if (okReads.length === 0) {
+      // すべて読み出し失敗
+      const firstError = reads.find((r): r is ReadFail => !r.ok)?.error ?? 'unknown';
+      return { kind: 'failed-multi', error: `all reads failed: ${firstError}` };
+    }
+
+    return shareFiles(
+      okReads.map((r) => r.blob),
+      okReads.map((r) => r.fileName),
+    );
   },
 
   processNext() {

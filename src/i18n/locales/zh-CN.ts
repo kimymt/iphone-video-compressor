@@ -60,6 +60,8 @@ export const zhCN: Messages = {
     aria: '压缩队列',
     clearAllAria: '清除所有 {count} 个已完成项目',
     clearAllCta: '清除已完成 ({count})',
+    saveAllAria: '保存所有 {count} 个已完成项目',
+    saveAllCta: '保存全部 ({count})',
   },
 
   wakeLock: {
@@ -161,6 +163,9 @@ export const zhCN: Messages = {
     cancelled: '已取消分享',
     failed: '分享失败: {error}',
     readFailed: '读取输出文件失败: {error}',
+    saveAllCancelled: '已取消保存',
+    saveAllFailedMulti: '保存失败,请逐个保存',
+    saveAllNoneAvailable: '没有可保存的视频',
   },
 
   toast: {

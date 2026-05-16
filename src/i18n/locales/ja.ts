@@ -61,6 +61,9 @@ export const ja = {
     aria: '圧縮キュー',
     clearAllAria: '完了したアイテム {count} 件をすべて削除',
     clearAllCta: '完了をすべて削除 ({count})',
+    /** V2: バルク保存ボタン (完了動画を 1 タップで Share Sheet に渡す) */
+    saveAllAria: '完了したアイテム {count} 件をすべて保存',
+    saveAllCta: '完了をすべて保存 ({count})',
   },
 
   wakeLock: {
@@ -171,6 +174,10 @@ export const ja = {
     cancelled: '共有がキャンセルされました',
     failed: '共有に失敗しました: {error}',
     readFailed: '出力ファイルの読み込みに失敗しました: {error}',
+    /** V2: バルク保存トースト (ユーザ文言は「保存」で統一) */
+    saveAllCancelled: '保存がキャンセルされました',
+    saveAllFailedMulti: '保存に失敗しました、個別に保存してください',
+    saveAllNoneAvailable: '保存できる動画がありません',
   },
 
   toast: {

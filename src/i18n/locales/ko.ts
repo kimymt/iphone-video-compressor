@@ -59,6 +59,8 @@ export const ko: Messages = {
     aria: '압축 대기열',
     clearAllAria: '완료된 항목 {count}개 모두 삭제',
     clearAllCta: '완료 항목 모두 삭제 ({count})',
+    saveAllAria: '완료된 항목 {count}개 모두 저장',
+    saveAllCta: '완료 항목 모두 저장 ({count})',
   },
 
   wakeLock: {
@@ -160,6 +162,9 @@ export const ko: Messages = {
     cancelled: '공유가 취소되었습니다',
     failed: '공유 실패: {error}',
     readFailed: '출력 파일을 읽지 못했습니다: {error}',
+    saveAllCancelled: '저장이 취소되었습니다',
+    saveAllFailedMulti: '저장에 실패했습니다, 개별로 저장해 주세요',
+    saveAllNoneAvailable: '저장할 동영상이 없습니다',
   },
 
   toast: {
