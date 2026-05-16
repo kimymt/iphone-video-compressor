@@ -1,5 +1,7 @@
 # 動画圧縮 — iPhone Video Compressor
 
+**日本語** | [English](./README.en.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md)
+
 iPhone で撮影した動画を、サーバーへ送らずに iPhone の中だけで圧縮するアプリ。
 
 🔗 **https://ivc.mymt.casa**
