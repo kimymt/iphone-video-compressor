@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-05-16 — V2: HEVC bench + バルク保存
+
+V1.1.0 出荷後の第 2 機能バッチ。VideoToolbox の単一 HW エンコーダ制約を実測検出する
+**HEVC 並列ベンチマーク**、N 件圧縮動画を 1 タップで Photos に取り込む **「完了をすべて保存」**
+ボタン、393px iPhone Standard での **横並びボタンレイアウト**、そして /ship の adversarial
+review で見つかった race + 並列 bench 競合の修正。Vitest 483 → 562 (+79)。
+
+### Added — V2: 完了動画のバルク保存
+
+- **「完了をすべて保存 ({N})」ボタン** in QueueList — 圧縮完了動画を 1 タップで Share Sheet に渡し、「写真に保存」を 1 回タップで全件一括保存。従来は N 件保存に 2N タップ (個別「共有」→「写真に保存」) だったのが、**2 タップ固定** (バルク保存ボタン → 写真に保存) に短縮。
+  - **`src/platform/share.ts`** に `shareFiles(blobs[], fileNames[])` 追加 — 合計サイズ 1GB ガード、`canShare({files})` 検証、AbortError = cancelled、それ以外 = `failed-multi` で個別保存に誘導
+  - **`queueStore.shareAllDone()`** action — `status === 'done'` 全件の OPFS 出力を並列 read → shareFiles。1 件でも read 成功すれば残りで share、全件失敗のみ `failed-multi`
+  - **`deriveShareFileName`** を ShareButton.tsx から share.ts に移動 (バルクでも使うため、ShareButton では re-export で後方互換維持)
+  - **QueueList UI** — 既存「完了をすべて削除」の左に並ぶ `Share` icon ボタン、done 件数 > 0 のときのみ表示、実行中 disable
+  - **文言は「保存」で統一** (ユーザのメンタルモデルが Share Sheet ではなく Photos への保存のため):
+    - ボタン: `完了をすべて保存 ({N})`
+    - cancelled: `保存がキャンセルされました`
+    - failed-multi: `保存に失敗しました、個別に保存してください`
+    - no-done: `保存できる動画がありません`
+- **i18n 5 言語** に `queueList.saveAllAria`/`saveAllCta` + `share.saveAllCancelled`/`saveAllFailedMulti`/`saveAllNoneAvailable` を追加
+
+### Added — V2: HEVC 並列ベンチマーク
+
+- **HEVC parallel encode bench** — VideoToolbox の単一 HW エンコーダ制約 (CLAUDE.md ハマりどころ 17) を実測で検出して、`queueStore.effectiveParallelism()` が HEVC プリセットの並列度を 1 に動的降格できるようにした。
+  - **`src/pipeline/hevcBench.ts`** — 合成 720p フレーム 60 枚 (~2 秒) を Canvas で生成し、1 並列 vs 2 並列で encode して `speedup = (2 * serialMs) / parallelMs` を計測 (`< 1.3` で slowdown 判定)。先頭フレームに `{ keyFrame: true }` 強制 (ハマりどころ 33)、HEVC encodeQueueSize 上限 4 で backpressure、AbortSignal 対応、VideoFrame leak ゼロ
+  - **`src/pipeline/hevcBenchOrchestrator.ts`** — `shouldRunBench` (90 日経過判定) + `runAndPersistHevcBench` (bench → 両 store 伝搬) + `maybeAutoRunHevcBench` (in-flight ロック付き自動実行)
+  - **`settingsStore.hevcBench: HevcBenchResult | null`** — localStorage に rich record を永続化、UI で `speedup ×1.85 — 並列 2` `最終実行: 5 分前` を表示
+  - **`queueStore.setHevcBenchSlowdown()`** — bench 結果で operational boolean を更新 + IndexedDB 永続化、値変更時に `processNext()` を再評価
+  - **SettingsSheet UI** — HEVC 対応端末のみ表示される bench セクション (`Cpu` icon)、実行ボタン + 再実行ボタン (`RefreshCw`)、実行中スピナー (`Loader2`)、完了/失敗トースト
+  - **App.tsx 自動実行** — `envCheck.hevcEncode === true` + `shouldRunBench(record) === true` のとき init 完了後 background で 1 回実行、失敗は console.warn のみで握り潰す
+  - **i18n 5 言語** に `settings.hevcBench.*` の 11 キー (intro / summary / lastRun / running / runButton / rerunButton / neverRun / parallelism1 / parallelism2 / failed / done) と `settings.section.hevcBench` を追加
+- **`formatRelativeTime(ms, locale)`** in `src/lib/format.ts` — `Intl.RelativeTimeFormat` ベースの「N 分前」「N 日前」表示ヘルパー。iOS Safari 14+ で利用可、未対応環境は英語フォールバック
+
+### Fixed — Adversarial review (`/ship` 内)
+
+- **`shareAllDone` race condition** — `readFromOpfs` が返す File は OPFS file handle の lazy
+  reference。share() 中にユーザが「完了をすべて削除」や個別 remove() を発火すると iOS
+  Photos に空動画/truncated data が渡る。修正: `file.arrayBuffer()` で即時 memory にコピー
+  してから share、OPFS 削除との race 窓を消す
+- **bench inflight lock の bypass** — SettingsSheet「再実行」ボタンが `runAndPersistHevcBench`
+  を直接呼ぶため、`maybeAutoRunHevcBench` の module-level inFlight lock を素通り。
+  double-tap で 2 並列 bench (計 6 並列 HEVC encoder) → VideoToolbox crash や測定値
+  不安定の risk。修正: inFlight lock を `runAndPersistHevcBench` 側に移動し、両 caller
+  path で共通化 (double-tap 時は同一 promise を返す)
+
+### Internal
+
+- **`HevcBenchAbortError`** を export — `name === 'AbortError'` (DOM 慣習に合わせる)
+- **`MAX_BENCH_AGE_MS = 90 * 24 * 60 * 60 * 1000`** — 自動再ベンチの閾値、`shouldRunBench` で使用 (iOS バージョンアップ後の VideoToolbox 挙動変化に対応)
+- **jsdom v25 用 `Blob.prototype.arrayBuffer` polyfill** in `tests/setup.ts` (FileReader 経由、本番 iOS Safari 14+ には不要)
+
+### テスト
+
+- Vitest: **562 / 562** (v1.1.0 出荷時 483 → +79 件)
+  - `hevcBench.test.ts` 20 件 — speedup 数式 / slowdown 境界 / encoder lifecycle / AbortSignal / 環境不在
+  - `hevcBenchOrchestrator.test.ts` 17 件 — shouldRunBench / runAndPersistHevcBench / maybeAutoRunHevcBench
+  - `settingsStore.test.ts` +5 件 — setHevcBench / localStorage 復元 / 壊れた record 正規化
+  - `queueStore.test.ts` +11 件 — setHevcBenchSlowdown / IndexedDB 永続化 / shareAllDone (空 / 混在 / OPFS 失敗 / canShare=false / cancelled)
+  - `SettingsSheet.test.tsx` +5 件 — bench セクション表示分岐 / 実行クリック
+  - `format.test.ts` +7 件 — `formatRelativeTime` (ja / en で出力検証)
+  - `share.test.ts` +9 件 — shareFiles (空 / 長さ不一致 / 1GB 超 / canShare 未実装 / canShare=false / 成功 / AbortError / 他 error / sanitize)
+  - `QueueList.test.tsx` +5 件 — save-all-done 表示分岐 / 件数 / shareAllDone 呼び出し / DOM 順
+- Playwright: 既存 42/42 を維持 (本機能は手動 E2E 検証、ベンチ実行は実機 VideoEncoder を要するため)
+- `tsc -b`: clean
+
+---
+
 ## [1.1.0] - 2026-05-15 — V1.1 Feature Batch
 
 v1.0.0 出荷後の機能拡充とバグ修正を集約した MINOR リリース。**設定シート (歯車)** でプリセット切替・言語選択・ストレージ管理を可能に、**i18n** で 5 言語対応（日本語 / English / 简体中文 / 繁體中文 / 한국어）、**View Transitions API** でキュー操作を smooth に、**サムネイル真っ白問題** を keyframe 強制で修正。累積 7 PR (#9–#15) をマージ済。

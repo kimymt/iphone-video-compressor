@@ -60,6 +60,10 @@ export const en: Messages = {
     aria: 'Compression queue',
     clearAllAria: 'Clear all {count} completed items',
     clearAllCta: 'Clear completed ({count})',
+    saveAllAria: 'Save all {count} completed items',
+    // V2: parallel structure with Clear ("Save completed" / "Clear completed"),
+    // and shorter to fit alongside Clear button on 393px iPhone Standard width.
+    saveAllCta: 'Save completed ({count})',
   },
 
   wakeLock: {
@@ -86,6 +90,7 @@ export const en: Messages = {
       pwa: 'Add to Home Screen',
       version: 'Version',
       language: 'Language',
+      hevcBench: 'HEVC parallelism benchmark',
     },
     presetGroupAria: 'Compression preset',
     h264Only: '* HEVC is not available on this device, so only H.264 presets are shown.',
@@ -109,6 +114,19 @@ export const en: Messages = {
       'zh-CN': '简体中文',
       'zh-TW': '繁體中文',
       ko: '한국어',
+    },
+    hevcBench: {
+      intro: 'Measures whether 2-parallel HEVC actually runs faster and picks the optimal parallelism.',
+      summary: 'speedup ×{speedup} — parallelism {parallelism}',
+      lastRun: 'Last run: {ago}',
+      running: 'Measuring…',
+      runButton: 'Run benchmark',
+      rerunButton: 'Re-run',
+      neverRun: 'Not yet run',
+      parallelism1: '1 (HEVC serialised)',
+      parallelism2: '2 (full parallel)',
+      failed: 'Benchmark failed: {error}',
+      done: 'Benchmark done: speedup ×{speedup}',
     },
   },
 
@@ -145,6 +163,9 @@ export const en: Messages = {
     cancelled: 'Share cancelled',
     failed: 'Share failed: {error}',
     readFailed: 'Failed to read output file: {error}',
+    saveAllCancelled: 'Save cancelled',
+    saveAllFailedMulti: 'Save failed — please save individually',
+    saveAllNoneAvailable: 'No videos available to save',
   },
 
   toast: {

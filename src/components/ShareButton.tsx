@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { Share, Loader } from 'lucide-react';
 import { readFromOpfs } from '../db/opfs';
-import { shareFile, type ShareResult } from '../platform/share';
+import { shareFile, deriveShareFileName, type ShareResult } from '../platform/share';
 import { useToastStore } from '../stores/toastStore';
 import { useT } from '../i18n';
 
@@ -27,16 +27,9 @@ export interface ShareButtonProps {
   className?: string;
 }
 
-/**
- * 元のファイル名から圧縮後の共有ファイル名を導出。
- * 例: `IMG_4523.MOV` → `IMG_4523_compressed.mp4`
- * 拡張子が無いものはそのまま `_compressed.mp4` を付与。
- */
-export function deriveShareFileName(originalName: string): string {
-  const dotIdx = originalName.lastIndexOf('.');
-  const stem = dotIdx > 0 ? originalName.slice(0, dotIdx) : originalName;
-  return `${stem}_compressed.mp4`;
-}
+/** V2: `deriveShareFileName` は src/platform/share.ts に移動 (shareFiles でも使うため)。
+ *  既存のテスト/インポート互換のため re-export する。 */
+export { deriveShareFileName };
 
 const DEFAULT_CLASSNAME =
   'ml-1 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--accent)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:text-[var(--label-tertiary)] disabled:hover:bg-transparent';

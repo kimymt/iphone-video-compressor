@@ -5,12 +5,23 @@
 
 import { create } from 'zustand';
 import type { QueueItem, PresetKey, Preset } from '../lib/types';
-import { writeInputToOpfs, deleteFromOpfs, outputPath } from '../db/opfs';
+import {
+  writeInputToOpfs,
+  deleteFromOpfs,
+  readFromOpfs,
+  outputPath,
+} from '../db/opfs';
+import {
+  shareFiles,
+  deriveShareFileName,
+  type ShareFilesResult,
+} from '../platform/share';
 import {
   loadAllQueueItems,
   saveQueueItem,
   deleteQueueItem,
   getSetting,
+  setSetting,
 } from '../db/indexeddb';
 import { hasEnoughQuota } from '../platform/storage';
 import { findPreset } from '../lib/presets';
@@ -91,9 +102,20 @@ export type QueueStoreActions = {
    * - hevc + hevcBenchSlowdown=true なら 1 (VideoToolbox の単一リソース対策、ハマりどころ 17)
    * - その他は parallelism (1 or 2)
    * hevcBenchSlowdown が null (= 未計測) は false 扱い。
-   * 実機ベンチでの動的判定は V2 (TODOS.md「V2: HEVC 並列ベンチマーク」)。
+   * V2 で実機ベンチでの動的判定を実装 (hevcBench.ts + hevcBenchOrchestrator.ts)。
    */
   effectiveParallelism: (preset: Preset) => 1 | 2;
+  /** V2: HEVC bench の slowdown フラグを更新 + IndexedDB に永続化。
+   *  orchestrator (runAndPersistHevcBench) が bench 完了時に呼ぶ。
+   *  null を渡すと未計測扱いに戻す (テスト/設定リセット用)。 */
+  setHevcBenchSlowdown: (value: boolean | null) => Promise<void>;
+  /** V2: status='done' な全アイテムの出力を OPFS から読み出して 1 回の Share Sheet
+   *  でまとめて保存する。ユーザは「写真に保存」を 1 タップで全件取り込み。
+   *  - done が 0 件のときは `{ kind: 'failed-multi', error: 'no done items' }`
+   *  - OPFS 読み出し失敗のアイテムは skip し、残りで shareFiles を呼ぶ
+   *    (全件 read 失敗なら 'failed-multi')
+   *  - 合計サイズ 1GB 超や canShare=false は shareFiles 内で failed-multi 判定 */
+  shareAllDone: () => Promise<ShareFilesResult>;
   /**
    * 'queued' なアイテムを並列度の上限まで起動する。
    * 並列度は effectiveParallelism(preset) で per-preset に決まる。
@@ -364,6 +386,64 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     if (state.parallelism === 1) return 1;
     if (preset.codec === 'hevc' && state.hevcBenchSlowdown === true) return 1;
     return 2;
+  },
+
+  async setHevcBenchSlowdown(value) {
+    set({ hevcBenchSlowdown: value });
+    // IndexedDB に永続化。失敗は致命的でないので握り潰す
+    // (次回 init 時に古い値が読まれるだけで bench 自体は再実行される)。
+    await setSetting('hevcBenchSlowdown', value).catch(() => {});
+    // 並列度が変わったかもしれないので、queued アイテムがあれば再評価して起動
+    get().processNext();
+  },
+
+  async shareAllDone() {
+    const dones = get().items.filter((i) => i.status === 'done');
+    if (dones.length === 0) {
+      return { kind: 'failed-multi', error: 'no done items' };
+    }
+
+    // OPFS から並列に読み出し → arrayBuffer() で即時メモリに buffer して
+    // 後続の remove()/clearCompleted() による OPFS 削除レースを防ぐ
+    // (Adversarial review #4: readFromOpfs は File reference を返すだけで data は lazy
+    //  読込み、share() 中に remove() で消されると iOS Photos に空ファイルが行く)。
+    type ReadOk = { ok: true; blob: Blob; fileName: string };
+    type ReadFail = { ok: false; error: string };
+    const reads: Array<ReadOk | ReadFail> = await Promise.all(
+      dones.map(async (item): Promise<ReadOk | ReadFail> => {
+        if (!item.outputOpfsPath) {
+          return { ok: false, error: 'no outputOpfsPath' };
+        }
+        try {
+          const file = await readFromOpfs(item.outputOpfsPath);
+          // 即時 arrayBuffer 読込みでメモリにコピー → これ以降 OPFS 削除されても OK
+          const buffer = await file.arrayBuffer();
+          const blob = new Blob([buffer], { type: file.type || 'video/mp4' });
+          return {
+            ok: true,
+            blob,
+            fileName: deriveShareFileName(item.fileName),
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }),
+    );
+
+    const okReads = reads.filter((r): r is ReadOk => r.ok);
+    if (okReads.length === 0) {
+      // すべて読み出し失敗
+      const firstError = reads.find((r): r is ReadFail => !r.ok)?.error ?? 'unknown';
+      return { kind: 'failed-multi', error: `all reads failed: ${firstError}` };
+    }
+
+    return shareFiles(
+      okReads.map((r) => r.blob),
+      okReads.map((r) => r.fileName),
+    );
   },
 
   processNext() {

@@ -59,6 +59,8 @@ export const ko: Messages = {
     aria: '압축 대기열',
     clearAllAria: '완료된 항목 {count}개 모두 삭제',
     clearAllCta: '완료 항목 모두 삭제 ({count})',
+    saveAllAria: '완료된 항목 {count}개 모두 저장',
+    saveAllCta: '완료 항목 모두 저장 ({count})',
   },
 
   wakeLock: {
@@ -85,6 +87,7 @@ export const ko: Messages = {
       pwa: '홈 화면에 추가',
       version: '버전',
       language: '언어',
+      hevcBench: 'HEVC 병렬 벤치마크',
     },
     presetGroupAria: '압축 프리셋',
     h264Only: '* 이 기기에서는 HEVC를 사용할 수 없어 H.264 프리셋만 표시됩니다.',
@@ -110,6 +113,19 @@ export const ko: Messages = {
       'zh-CN': '简体中文',
       'zh-TW': '繁體中文',
       ko: '한국어',
+    },
+    hevcBench: {
+      intro: '2 병렬 HEVC가 실제로 더 빠른지 측정하여 최적의 병렬도를 자동 선택합니다.',
+      summary: '속도 향상 ×{speedup} — 병렬도 {parallelism}',
+      lastRun: '마지막 실행: {ago}',
+      running: '측정 중…',
+      runButton: '벤치마크 실행',
+      rerunButton: '다시 실행',
+      neverRun: '아직 실행 안 함',
+      parallelism1: '1 (HEVC 직렬화)',
+      parallelism2: '2 (완전 병렬)',
+      failed: '벤치마크 실패: {error}',
+      done: '벤치마크 완료: 속도 향상 ×{speedup}',
     },
   },
 
@@ -146,6 +162,9 @@ export const ko: Messages = {
     cancelled: '공유가 취소되었습니다',
     failed: '공유 실패: {error}',
     readFailed: '출력 파일을 읽지 못했습니다: {error}',
+    saveAllCancelled: '저장이 취소되었습니다',
+    saveAllFailedMulti: '저장에 실패했습니다, 개별로 저장해 주세요',
+    saveAllNoneAvailable: '저장할 동영상이 없습니다',
   },
 
   toast: {

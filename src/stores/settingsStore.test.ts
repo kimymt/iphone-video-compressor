@@ -12,6 +12,21 @@ import {
   SETTINGS_STORAGE_KEY,
 } from './settingsStore';
 import type { EnvCheck } from '../lib/types';
+import type { HevcBenchResult } from '../pipeline/hevcBench';
+
+function makeBenchRecord(overrides: Partial<HevcBenchResult> = {}): HevcBenchResult {
+  return {
+    speedup: 1.8,
+    slowdown: false,
+    serialMs: 1000,
+    parallelMs: 1111,
+    ranAt: Date.now(),
+    frameCount: 60,
+    width: 1280,
+    height: 720,
+    ...overrides,
+  };
+}
 
 const HEVC_ENV: EnvCheck = {
   videoEncoder: true,
@@ -131,6 +146,65 @@ describe('settingsStore', () => {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       const parsed = JSON.parse(raw!);
       expect(parsed.cameraTipDismissed).toBe(true);
+    });
+  });
+
+  describe('V2: setHevcBench()', () => {
+    it('state と localStorage 両方を更新', () => {
+      useSettingsStore.getState().init(HEVC_ENV);
+      expect(useSettingsStore.getState().hevcBench).toBeNull();
+
+      const record = makeBenchRecord({ slowdown: true, speedup: 1.0 });
+      useSettingsStore.getState().setHevcBench(record);
+
+      expect(useSettingsStore.getState().hevcBench).toEqual(record);
+      const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)!);
+      expect(parsed.hevcBench).toEqual(record);
+    });
+
+    it('null を渡すとクリア', () => {
+      useSettingsStore.getState().init(HEVC_ENV);
+      useSettingsStore.getState().setHevcBench(makeBenchRecord());
+      useSettingsStore.getState().setHevcBench(null);
+      expect(useSettingsStore.getState().hevcBench).toBeNull();
+      const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)!);
+      expect(parsed.hevcBench).toBeNull();
+    });
+
+    it('init() で localStorage から hevcBench record を復元', () => {
+      const record = makeBenchRecord({ speedup: 1.4, slowdown: false });
+      localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({ preset: 'standard-hevc', hevcBench: record }),
+      );
+      useSettingsStore.getState().init(HEVC_ENV);
+      expect(useSettingsStore.getState().hevcBench).toEqual(record);
+    });
+
+    it('壊れた hevcBench record (型違反) は null に正規化', () => {
+      localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          preset: 'standard-hevc',
+          // speedup が文字列 = invalid
+          hevcBench: { speedup: 'fast', slowdown: true, serialMs: 1, parallelMs: 1, ranAt: 1, frameCount: 1, width: 1, height: 1 },
+        }),
+      );
+      useSettingsStore.getState().init(HEVC_ENV);
+      expect(useSettingsStore.getState().hevcBench).toBeNull();
+    });
+
+    it('既存の preset/language を保ったまま hevcBench だけ更新', () => {
+      useSettingsStore.getState().init(HEVC_ENV);
+      useSettingsStore.getState().setPreset('light-hevc');
+      useSettingsStore.getState().setLanguage('en');
+      const record = makeBenchRecord({ slowdown: true });
+      useSettingsStore.getState().setHevcBench(record);
+
+      const parsed = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)!);
+      expect(parsed.preset).toBe('light-hevc');
+      expect(parsed.language).toBe('en');
+      expect(parsed.hevcBench).toEqual(record);
     });
   });
 

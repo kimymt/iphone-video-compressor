@@ -10,9 +10,15 @@ import { useToastStore, _resetToastStoreForTest } from '../stores/toastStore';
 vi.mock('../db/opfs', () => ({
   readFromOpfs: vi.fn(),
 }));
-vi.mock('../platform/share', () => ({
-  shareFile: vi.fn(),
-}));
+vi.mock('../platform/share', async () => {
+  // shareFile は mock したいが、deriveShareFileName / sanitizeFileName は
+  // 本物を維持する (ShareButton から re-export されてテストで使うため)。
+  const actual = await vi.importActual<typeof import('../platform/share')>('../platform/share');
+  return {
+    ...actual,
+    shareFile: vi.fn(),
+  };
+});
 
 import { readFromOpfs } from '../db/opfs';
 import { shareFile } from '../platform/share';

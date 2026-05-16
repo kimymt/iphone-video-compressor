@@ -180,38 +180,35 @@ Phase 6 の `registerType: 'autoUpdate'` は処理中のジョブを中断する
 
 ---
 
-## V2: HEVC 並列ベンチマーク (hevcBenchSlowdown 自動判定)
+## ✅ v1.2.0 で完了済み
 
-**何:**
-端末で「HEVC を 2 並列で encode したときに 1 並列より遅くなるか」をベンチマークし、結果を `localStorage.hevcBenchSlowdown` に保存。`queueStore.effectiveParallelism(preset)` が hevcBenchSlowdown=true のとき HEVC を 1 並列に降格する。
+### HEVC 並列ベンチマーク (hevcBenchSlowdown 自動判定)
 
-**Why:**
-VideoToolbox の HEVC エンコーダは単一ハードウェアリソース。2 並列で逆に遅くなる端末がある (CLAUDE.md ハマりどころ 17)。一方、A17/M シリーズ世代では並列が効くこともある。実機データで判定したい。
+CHANGELOG.md の `[1.2.0]` セクションに詳細あり:
 
-**現状 (v1.1.0 時点):**
-- `effectiveParallelism(preset)` は store に実装済み。`hevcBenchSlowdown === true` のときに HEVC を 1 並列に降格するロジックは既に動く。
-- 自動ベンチは実装していない。`hevcBenchSlowdown` は `null` (= 未計測) で初期化、`null` を false 扱い (= 降格しない)。
-- 結果として現状は parallelism = effectiveParallelism。
-- iPhone Air は `navigator.hardwareConcurrency=4` capped で `parallelism=1` のため、bench を実装しても今のところ効果なし。Mac (8+ コア報告) で 2 並列が選ばれた場合のみ意味を持つ。
-
-**Pros:**
-- Mac やハイエンド iPad で HEVC 並列が遅い端末を自動的に 1 並列に落とせる
-- ユーザーが設定を意識しなくて済む
-
-**Cons:**
-- 60 秒の動画を 2 回処理するベンチは初回起動 UX を大きく損なう (バックグラウンドで走らせるか、初回ジョブ後に走らせるかは要設計)
-- ベンチ用の合成動画 (テストパターン) を Worker 内で生成する仕組みが必要
-- ベンチ実行中に実ジョブが入ったときの優先制御が必要
-
-**スコープ:**
-- 1〜2 日 (合成入力生成、並列タイミング計測、結果保存、バックグラウンド実行、SettingsSheet からの再実行 UI)
-
-**Context:**
-- CLAUDE.md「実装フェーズ > Phase 4」で当初 Phase 4 に含めていたが、Phase 4c 着手時にユーザー判断で V2 へ退避 (2026-05-15 のセッション)
-- 必要なときに store 側の `hevcBenchSlowdown` を上書きすれば即座に降格する API は揃っている
-- v1.1.0 で SettingsSheet が実装済み → そこに「並列ベンチを実行」ボタンを追加するのが現実的
-
-**Depends on:** 需要に応じて単独実施可能
+- **`src/pipeline/hevcBench.ts`** — 合成 720p フレーム (60 枚) を 1 並列 vs 2 並列で encode し
+  speedup を計測。`(2 * serialMs) / parallelMs` の比が threshold (1.3) 未満なら
+  `slowdown=true`。AbortSignal 対応、VideoFrame leak ゼロ。
+- **`src/pipeline/hevcBenchOrchestrator.ts`** — bench 実行と settingsStore / queueStore への
+  伝搬を担当。`shouldRunBench` (90 日経過判定) + `maybeAutoRunHevcBench` (in-flight ロック付き
+  自動実行) のグルー。
+- **`settingsStore.hevcBench: HevcBenchResult | null`** — localStorage に rich record を永続化。
+  SettingsSheet で「speedup ×1.85 — 並列 2」「最終実行: 5 分前」を表示。
+- **`queueStore.setHevcBenchSlowdown()`** — bench 結果で operational boolean を更新 + IndexedDB
+  永続化。値変更時に `processNext()` を再評価して queued アイテムの並列度を即時反映。
+- **SettingsSheet UI** — HEVC 対応端末のみ表示される bench セクション。実行ボタン (`Cpu` icon)
+  と再実行ボタン (`RefreshCw` icon)、実行中スピナー (`Loader2`)、完了/失敗トースト。
+- **App.tsx 自動実行** — `envCheck.hevcEncode === true` + `shouldRunBench(record) === true` の
+  ときに init 完了後 background で 1 回実行。失敗は console.warn のみで握り潰す。
+- **i18n 5 言語** に `settings.hevcBench.*` の 11 キー追加 (intro / summary / lastRun / running /
+  runButton / rerunButton / neverRun / parallelism1 / parallelism2 / failed / done)。
+- **テスト 60+ 件追加** (Vitest 540/540 緑、+57):
+  - `hevcBench.test.ts` 20 件 — speedup 数式 / slowdown 境界 / encoder lifecycle / AbortSignal / 環境不在
+  - `hevcBenchOrchestrator.test.ts` 17 件 — shouldRunBench / runAndPersistHevcBench / maybeAutoRunHevcBench
+  - `settingsStore.test.ts` +5 件 — setHevcBench / localStorage 復元 / 壊れた record 正規化
+  - `queueStore.test.ts` +3 件 — setHevcBenchSlowdown / IndexedDB 永続化
+  - `SettingsSheet.test.tsx` +5 件 — bench セクション表示分岐 / 実行クリック
+  - `format.test.ts` +7 件 — `formatRelativeTime` (Intl.RelativeTimeFormat、5 言語確認)
 
 ---
 

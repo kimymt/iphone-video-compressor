@@ -60,6 +60,8 @@ export const zhCN: Messages = {
     aria: '压缩队列',
     clearAllAria: '清除所有 {count} 个已完成项目',
     clearAllCta: '清除已完成 ({count})',
+    saveAllAria: '保存所有 {count} 个已完成项目',
+    saveAllCta: '保存全部 ({count})',
   },
 
   wakeLock: {
@@ -86,6 +88,7 @@ export const zhCN: Messages = {
       pwa: '添加到主屏幕',
       version: '版本',
       language: '语言',
+      hevcBench: 'HEVC 并行基准测试',
     },
     presetGroupAria: '压缩预设',
     h264Only: '* 此设备不支持 HEVC, 仅显示 H.264 预设。',
@@ -111,6 +114,19 @@ export const zhCN: Messages = {
       'zh-CN': '简体中文',
       'zh-TW': '繁體中文',
       ko: '한국어',
+    },
+    hevcBench: {
+      intro: '测量 2 路并行 HEVC 是否更快,并自动选择最佳并行度。',
+      summary: '加速 ×{speedup} — 并行 {parallelism}',
+      lastRun: '上次运行: {ago}',
+      running: '测量中…',
+      runButton: '运行基准测试',
+      rerunButton: '重新运行',
+      neverRun: '尚未运行',
+      parallelism1: '1 (HEVC 串行)',
+      parallelism2: '2 (完全并行)',
+      failed: '基准测试失败: {error}',
+      done: '基准测试完成: 加速 ×{speedup}',
     },
   },
 
@@ -147,6 +163,9 @@ export const zhCN: Messages = {
     cancelled: '已取消分享',
     failed: '分享失败: {error}',
     readFailed: '读取输出文件失败: {error}',
+    saveAllCancelled: '已取消保存',
+    saveAllFailedMulti: '保存失败,请逐个保存',
+    saveAllNoneAvailable: '没有可保存的视频',
   },
 
   toast: {

@@ -367,6 +367,132 @@ describe('SettingsSheet — drag-to-dismiss', () => {
   });
 });
 
+describe('SettingsSheet — V2: HEVC ベンチマーク', () => {
+  it('HEVC 対応端末: bench セクションが表示される + 未実行時は "未計測"', () => {
+    render(
+      <SettingsSheet
+        open={true}
+        onClose={() => {}}
+        envCheck={HEVC_ENV}
+        fetchStorageInfo={fakeStorage}
+      />,
+    );
+    const status = screen.getByTestId('settings-hevc-bench-status');
+    // ja locale で「未計測」が含まれる
+    expect(status.textContent).toMatch(/未計測/);
+    // 実行ボタンが表示される
+    const button = screen.getByTestId('settings-hevc-bench-run');
+    expect(button).toBeTruthy();
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('HEVC 非対応端末: bench セクション自体が表示されない', () => {
+    render(
+      <SettingsSheet
+        open={true}
+        onClose={() => {}}
+        envCheck={H264_ONLY_ENV}
+        fetchStorageInfo={fakeStorage}
+      />,
+    );
+    expect(screen.queryByTestId('settings-hevc-bench-status')).toBeNull();
+    expect(screen.queryByTestId('settings-hevc-bench-run')).toBeNull();
+  });
+
+  it('bench record があるとき: speedup と並列度が表示される (slowdown=false → 並列 2)', () => {
+    act(() => {
+      useSettingsStore.getState().setHevcBench({
+        speedup: 1.85,
+        slowdown: false,
+        serialMs: 1000,
+        parallelMs: 1081,
+        ranAt: Date.now() - 5 * 60 * 1000,
+        frameCount: 60,
+        width: 1280,
+        height: 720,
+      });
+    });
+    render(
+      <SettingsSheet
+        open={true}
+        onClose={() => {}}
+        envCheck={HEVC_ENV}
+        fetchStorageInfo={fakeStorage}
+      />,
+    );
+    const status = screen.getByTestId('settings-hevc-bench-status');
+    expect(status.textContent).toContain('1.85');
+    expect(status.textContent).toMatch(/最大並列|完全並列/);
+    // 再実行ボタンが表示される (rerunButton)
+    expect(screen.getByTestId('settings-hevc-bench-run').textContent).toMatch(/再実行/);
+  });
+
+  it('bench record で slowdown=true なら 並列 1 を表示', () => {
+    act(() => {
+      useSettingsStore.getState().setHevcBench({
+        speedup: 1.0,
+        slowdown: true,
+        serialMs: 1000,
+        parallelMs: 2000,
+        ranAt: Date.now(),
+        frameCount: 60,
+        width: 1280,
+        height: 720,
+      });
+    });
+    render(
+      <SettingsSheet
+        open={true}
+        onClose={() => {}}
+        envCheck={HEVC_ENV}
+        fetchStorageInfo={fakeStorage}
+      />,
+    );
+    const status = screen.getByTestId('settings-hevc-bench-status');
+    expect(status.textContent).toContain('1.00');
+    expect(status.textContent).toMatch(/直列化|HEVC を/);
+  });
+
+  it('run ボタンタップ: bench が実行され store と toast が更新される', async () => {
+    const benchMock = vi.fn(async () => ({
+      speedup: 1.95,
+      slowdown: false,
+      serialMs: 800,
+      parallelMs: 820,
+      ranAt: Date.now(),
+      frameCount: 60,
+      width: 1280,
+      height: 720,
+    }));
+    const setHevcBench = vi.fn();
+    const setHevcBenchSlowdown = vi.fn(async () => {});
+
+    render(
+      <SettingsSheet
+        open={true}
+        onClose={() => {}}
+        envCheck={HEVC_ENV}
+        fetchStorageInfo={fakeStorage}
+        hevcBenchDeps={{ bench: benchMock, setHevcBench, setHevcBenchSlowdown }}
+      />,
+    );
+
+    const button = screen.getByTestId('settings-hevc-bench-run');
+    await act(async () => {
+      fireEvent.click(button);
+      // bench promise が resolve + finally の setBenchRunning(false) が flush するまで待つ
+      // (microtask 2 段: bench resolve → setHevcBench → setHevcBenchSlowdown → finally)
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(benchMock).toHaveBeenCalledTimes(1);
+    expect(setHevcBench).toHaveBeenCalledTimes(1);
+    expect(setHevcBenchSlowdown).toHaveBeenCalledWith(false);
+  });
+});
+
 describe('SettingsSheet — open=false 後の DOM 残存', () => {
   it('open=true → false で即時には消えない (アニメ用に DOM 残す)', async () => {
     const { rerender } = render(

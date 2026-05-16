@@ -61,6 +61,9 @@ export const ja = {
     aria: '圧縮キュー',
     clearAllAria: '完了したアイテム {count} 件をすべて削除',
     clearAllCta: '完了をすべて削除 ({count})',
+    /** V2: バルク保存ボタン (完了動画を 1 タップで Share Sheet に渡す) */
+    saveAllAria: '完了したアイテム {count} 件をすべて保存',
+    saveAllCta: '完了をすべて保存 ({count})',
   },
 
   wakeLock: {
@@ -88,6 +91,7 @@ export const ja = {
       pwa: 'ホーム画面に追加',
       version: 'バージョン',
       language: '言語',
+      hevcBench: 'HEVC 並列ベンチマーク',
     },
     presetGroupAria: '圧縮プリセット',
     h264Only: '※ HEVC が利用できない端末のため H.264 プリセットのみ表示しています。',
@@ -111,6 +115,29 @@ export const ja = {
       'zh-CN': '简体中文',
       'zh-TW': '繁體中文',
       ko: '한국어',
+    },
+    hevcBench: {
+      /** ベンチ未実行時の説明文 */
+      intro: '2 並列 HEVC が高速化するかを計測して、最適な並列度を自動選択します。',
+      /** 結果サマリ: speedup の数値を表示 (例: 「speedup ×1.8 — 並列 2」) */
+      summary: 'speedup ×{speedup} — 並列 {parallelism}',
+      /** 最終実行のサブテキスト (例: 「最終実行: 5 分前」「最終実行: 2 日前」) */
+      lastRun: '最終実行: {ago}',
+      /** 計測中のラベル */
+      running: '計測中…',
+      /** 実行ボタン (未実行時) */
+      runButton: 'ベンチを実行',
+      /** 実行ボタン (再実行時) */
+      rerunButton: '再実行',
+      /** 結果不在時の文言 */
+      neverRun: '未計測',
+      /** parallelism 1 を意味するインライン文言 */
+      parallelism1: '1 (HEVC を直列化)',
+      parallelism2: '2 (最大並列)',
+      /** エラー時のトースト文言 (詳細は {error} に入る) */
+      failed: 'ベンチに失敗しました: {error}',
+      /** 計測完了トースト (speedup を表示) */
+      done: 'ベンチ完了: speedup ×{speedup}',
     },
   },
 
@@ -147,6 +174,10 @@ export const ja = {
     cancelled: '共有がキャンセルされました',
     failed: '共有に失敗しました: {error}',
     readFailed: '出力ファイルの読み込みに失敗しました: {error}',
+    /** V2: バルク保存トースト (ユーザ文言は「保存」で統一) */
+    saveAllCancelled: '保存がキャンセルされました',
+    saveAllFailedMulti: '保存に失敗しました、個別に保存してください',
+    saveAllNoneAvailable: '保存できる動画がありません',
   },
 
   toast: {

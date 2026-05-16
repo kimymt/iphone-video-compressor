@@ -43,3 +43,58 @@ export function extractExtension(fileName: string): string {
   if (idx <= 0 || idx === fileName.length - 1) return 'bin';
   return fileName.slice(idx + 1).toLowerCase();
 }
+
+/**
+ * 過去の timestamp を「5 分前」「2 日前」のような相対時間に変換する。
+ * Intl.RelativeTimeFormat を使うので locale 自動対応 (iOS Safari 14+ で利用可)。
+ *
+ * - 60 秒未満 → "今"
+ * - 60 分未満 → "N 分前"
+ * - 24 時間未満 → "N 時間前"
+ * - 30 日未満 → "N 日前"
+ * - それ以上 → "N ヶ月前" / "N 年前"
+ *
+ * 未来時刻 (時計巻き戻し) は "今" として返す。
+ * Intl 未対応の環境 (古い jsdom) では英語フォールバック ("N min ago")。
+ */
+export function formatRelativeTime(
+  timestampMs: number,
+  locale: string = typeof navigator !== 'undefined' ? navigator.language : 'en',
+  now: () => number = Date.now,
+): string {
+  const diffMs = timestampMs - now();
+  const absSec = Math.abs(diffMs) / 1000;
+
+  let value: number;
+  let unit: Intl.RelativeTimeFormatUnit;
+  if (absSec < 60) {
+    value = 0;
+    unit = 'second';
+  } else if (absSec < 3600) {
+    value = Math.round(diffMs / (60 * 1000));
+    unit = 'minute';
+  } else if (absSec < 86400) {
+    value = Math.round(diffMs / (3600 * 1000));
+    unit = 'hour';
+  } else if (absSec < 30 * 86400) {
+    value = Math.round(diffMs / (86400 * 1000));
+    unit = 'day';
+  } else if (absSec < 365 * 86400) {
+    value = Math.round(diffMs / (30 * 86400 * 1000));
+    unit = 'month';
+  } else {
+    value = Math.round(diffMs / (365 * 86400 * 1000));
+    unit = 'year';
+  }
+
+  try {
+    const fmt = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    return fmt.format(value, unit);
+  } catch {
+    // 古い環境 (Intl.RelativeTimeFormat 未対応) のフォールバック
+    if (value === 0) return 'just now';
+    const abs = Math.abs(value);
+    const suffix = value < 0 ? 'ago' : 'from now';
+    return `${abs} ${unit}${abs !== 1 ? 's' : ''} ${suffix}`;
+  }
+}

@@ -16,6 +16,7 @@ import { useI18n } from './i18n';
 import { formatBytes } from './lib/format';
 import { defaultPresetKey } from './lib/presets';
 import type { EnvCheck } from './lib/types';
+import { maybeAutoRunHevcBench } from './pipeline/hevcBenchOrchestrator';
 
 // Phase 4b: 6 ステータス対応の QueueItem + QueueList に統合。
 // Phase 4c: retry + clearCompleted、Phase 5: ShareButton + WakeLock + 完了サウンド。
@@ -36,6 +37,7 @@ export default function App() {
   const settingsLanguage = useSettingsStore((s) => s.language);
   const settingsInit = useSettingsStore((s) => s.init);
   const settingsInitialized = useSettingsStore((s) => s.initialized);
+  const settingsHevcBench = useSettingsStore((s) => s.hevcBench);
 
   const { t, preference: i18nPreference, setPreference: setI18nPreference } = useI18n();
 
@@ -101,6 +103,30 @@ export default function App() {
       unsubscribe();
     };
   }, [initialized]);
+
+  // V2: HEVC 並列ベンチを自動実行 (1 回だけ、shouldRunBench が true のとき)。
+  // 条件:
+  //   - envCheck.hevcEncode === true (非 HEVC 端末は不要)
+  //   - settingsInitialized (hevcBench record が読み込まれている)
+  //   - shouldRunBench(record) === true (未実行 or 90 日以上経過)
+  //   - in-flight ロックが空 (orchestrator 内部で管理)
+  // 失敗は console.warn のみで握り潰す (致命的でない、次回起動で再試行)。
+  useEffect(() => {
+    if (!envCheck?.canRun) return;
+    if (!envCheck.hevcEncode) return;
+    if (!settingsInitialized) return;
+    const result = maybeAutoRunHevcBench(
+      { hevcEncode: envCheck.hevcEncode },
+      settingsHevcBench,
+    );
+    if (result.status === 'started') {
+      result.promise.catch(() => {
+        // orchestrator が console.warn を出すので追加処理は不要
+      });
+    }
+    // settingsHevcBench の参照が変わった時のみ再評価 (= bench 完了で record 更新時)。
+    // それ以外は in-flight ロックで spam を防ぐ。
+  }, [envCheck, settingsInitialized, settingsHevcBench]);
 
   // dev mode (?dev=1) で E2E から store にアクセスできるよう window に露出。
   // __movieCompresserStore: 現在の state スナップショット (items / actions)。items 変更で再代入。
