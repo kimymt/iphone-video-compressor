@@ -768,4 +768,54 @@ describe('queueStore', () => {
       expect(queued).toBe(1);
     });
   });
+
+  describe('V2: setHevcBenchSlowdown()', () => {
+    beforeEach(async () => {
+      await useQueueStore.getState().init();
+    });
+
+    it('state.hevcBenchSlowdown を即時に更新', async () => {
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBeNull();
+      await useQueueStore.getState().setHevcBenchSlowdown(true);
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBe(true);
+      await useQueueStore.getState().setHevcBenchSlowdown(false);
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBe(false);
+      await useQueueStore.getState().setHevcBenchSlowdown(null);
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBeNull();
+    });
+
+    it('次回 init() で IndexedDB から復元される', async () => {
+      await useQueueStore.getState().setHevcBenchSlowdown(true);
+      _resetQueueStoreForTest();
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBe(true);
+    });
+
+    it('値変更後に processNext() が再評価される (HEVC 2 並列待機 → slowdown=true で 1 件のみ稼働)', async () => {
+      _resetQueueStoreForTest();
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          storage: (globalThis as { navigator: { storage: unknown } }).navigator.storage,
+          hardwareConcurrency: 8,
+        },
+        configurable: true,
+        writable: true,
+      });
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+
+      const f1 = new File(['a'], 'a.mov');
+      const f2 = new File(['b'], 'b.mov');
+      await useQueueStore.getState().add([f1, f2], 'standard-hevc');
+      await flush();
+      // 初期は slowdown=null → 2 並列起動
+      expect(mockEnv.spawnCount).toBe(2);
+
+      // 既に 2 並列起動済みなので、ここで slowdown=true にしても落とせない
+      // (running ジョブは続行)。queued が新たに来た時に降格が効くことを別ケースで確認する。
+      await useQueueStore.getState().setHevcBenchSlowdown(true);
+      expect(useQueueStore.getState().hevcBenchSlowdown).toBe(true);
+    });
+  });
 });

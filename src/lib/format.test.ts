@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBytes, formatDuration, extractExtension } from './format';
+import { formatBytes, formatDuration, extractExtension, formatRelativeTime } from './format';
 
 describe('formatBytes', () => {
   it('0 / 負 / NaN は "—" もしくは "0 B"', () => {
@@ -64,5 +64,49 @@ describe('extractExtension', () => {
 
   it('複数 "." はあとの 1 つだけ', () => {
     expect(extractExtension('my.video.MP4')).toBe('mp4');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  // Locale 固定で出力安定化 (Intl.RelativeTimeFormat の en は "5 minutes ago" 形式)
+  const en = 'en';
+  const now = () => 1_000_000_000_000;
+
+  it('60 秒以内は "now" 相当 (en で "now")', () => {
+    const result = formatRelativeTime(now() - 5_000, en, now);
+    // en の Intl.RelativeTimeFormat({ numeric: 'auto' }) は 0 秒 → "now"
+    expect(result.toLowerCase()).toContain('now');
+  });
+
+  it('5 分前は "5 minutes ago" 相当', () => {
+    const result = formatRelativeTime(now() - 5 * 60 * 1000, en, now);
+    expect(result).toMatch(/5 minutes? ago/);
+  });
+
+  it('2 時間前は "2 hours ago" 相当', () => {
+    const result = formatRelativeTime(now() - 2 * 60 * 60 * 1000, en, now);
+    expect(result).toMatch(/2 hours? ago/);
+  });
+
+  it('3 日前は "3 days ago" 相当', () => {
+    const result = formatRelativeTime(now() - 3 * 24 * 60 * 60 * 1000, en, now);
+    expect(result).toMatch(/3 days? ago/);
+  });
+
+  it('2 ヶ月前は "2 months ago" 相当', () => {
+    const result = formatRelativeTime(now() - 60 * 24 * 60 * 60 * 1000, en, now);
+    expect(result).toMatch(/2 months? ago/);
+  });
+
+  it('未来時刻 (時計巻き戻し) は "in N" 形式', () => {
+    const result = formatRelativeTime(now() + 10 * 60 * 1000, en, now);
+    // en では "in 10 minutes" のような表記になる
+    expect(result.toLowerCase()).toMatch(/in 10 minutes?/);
+  });
+
+  it('日本語 locale で「5 分前」相当の表示', () => {
+    const result = formatRelativeTime(now() - 5 * 60 * 1000, 'ja', now);
+    // ja: "5 分前"
+    expect(result).toMatch(/5\s*分前/);
   });
 });

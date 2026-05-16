@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added — V2: HEVC 並列ベンチマーク
+
+- **HEVC parallel encode bench** — VideoToolbox の単一 HW エンコーダ制約 (CLAUDE.md ハマりどころ 17) を実測で検出して、`queueStore.effectiveParallelism()` が HEVC プリセットの並列度を 1 に動的降格できるようにした。
+  - **`src/pipeline/hevcBench.ts`** — 合成 720p フレーム 60 枚 (~2 秒) を Canvas で生成し、1 並列 vs 2 並列で encode して `speedup = (2 * serialMs) / parallelMs` を計測 (`< 1.3` で slowdown 判定)。先頭フレームに `{ keyFrame: true }` 強制 (ハマりどころ 33)、HEVC encodeQueueSize 上限 4 で backpressure、AbortSignal 対応、VideoFrame leak ゼロ
+  - **`src/pipeline/hevcBenchOrchestrator.ts`** — `shouldRunBench` (90 日経過判定) + `runAndPersistHevcBench` (bench → 両 store 伝搬) + `maybeAutoRunHevcBench` (in-flight ロック付き自動実行)
+  - **`settingsStore.hevcBench: HevcBenchResult | null`** — localStorage に rich record を永続化、UI で `speedup ×1.85 — 並列 2` `最終実行: 5 分前` を表示
+  - **`queueStore.setHevcBenchSlowdown()`** — bench 結果で operational boolean を更新 + IndexedDB 永続化、値変更時に `processNext()` を再評価
+  - **SettingsSheet UI** — HEVC 対応端末のみ表示される bench セクション (`Cpu` icon)、実行ボタン + 再実行ボタン (`RefreshCw`)、実行中スピナー (`Loader2`)、完了/失敗トースト
+  - **App.tsx 自動実行** — `envCheck.hevcEncode === true` + `shouldRunBench(record) === true` のとき init 完了後 background で 1 回実行、失敗は console.warn のみで握り潰す
+  - **i18n 5 言語** に `settings.hevcBench.*` の 11 キー (intro / summary / lastRun / running / runButton / rerunButton / neverRun / parallelism1 / parallelism2 / failed / done) と `settings.section.hevcBench` を追加
+- **`formatRelativeTime(ms, locale)`** in `src/lib/format.ts` — `Intl.RelativeTimeFormat` ベースの「N 分前」「N 日前」表示ヘルパー。iOS Safari 14+ で利用可、未対応環境は英語フォールバック
+
+### Internal
+
+- **`HevcBenchAbortError`** を export — `name === 'AbortError'` (DOM 慣習に合わせる)
+- **`MAX_BENCH_AGE_MS = 90 * 24 * 60 * 60 * 1000`** — 自動再ベンチの閾値、`shouldRunBench` で使用 (iOS バージョンアップ後の VideoToolbox 挙動変化に対応)
+
+### テスト
+
+- Vitest: **540 / 540** (v1.1.0 出荷時 483 → +57 件)
+  - `hevcBench.test.ts` 20 件 — speedup 数式 / slowdown 境界 / encoder lifecycle / AbortSignal / 環境不在
+  - `hevcBenchOrchestrator.test.ts` 17 件 — shouldRunBench / runAndPersistHevcBench / maybeAutoRunHevcBench
+  - `settingsStore.test.ts` +5 件 — setHevcBench / localStorage 復元 / 壊れた record 正規化
+  - `queueStore.test.ts` +3 件 — setHevcBenchSlowdown / IndexedDB 永続化
+  - `SettingsSheet.test.tsx` +5 件 — bench セクション表示分岐 / 実行クリック
+  - `format.test.ts` +7 件 — `formatRelativeTime` (ja / en で出力検証)
+- Playwright: 既存 42/42 を維持 (本機能は手動 E2E 検証、ベンチ実行は実機 VideoEncoder を要するため)
+- `tsc -b`: clean
+
+---
+
 ## [1.1.0] - 2026-05-15 — V1.1 Feature Batch
 
 v1.0.0 出荷後の機能拡充とバグ修正を集約した MINOR リリース。**設定シート (歯車)** でプリセット切替・言語選択・ストレージ管理を可能に、**i18n** で 5 言語対応（日本語 / English / 简体中文 / 繁體中文 / 한국어）、**View Transitions API** でキュー操作を smooth に、**サムネイル真っ白問題** を keyframe 強制で修正。累積 7 PR (#9–#15) をマージ済。

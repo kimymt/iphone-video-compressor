@@ -20,14 +20,20 @@
 // - Reduced Motion: drag は動作するがアニメは即時切替
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Settings, X, HardDrive, Camera, Home, Github, Languages } from 'lucide-react';
+import { Settings, X, HardDrive, Camera, Home, Github, Languages, Cpu, RefreshCw, Loader2 } from 'lucide-react';
 import type { EnvCheck, PresetKey } from '../lib/types';
 import { getAvailablePresets } from '../lib/presets';
 import { getStorageInfo, type StorageInfo } from '../platform/storage';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useToastStore } from '../stores/toastStore';
 import { useT, useI18n } from '../i18n';
 import type { LocalePreference } from '../i18n';
-import { formatBytes } from '../lib/format';
+import { formatBytes, formatRelativeTime } from '../lib/format';
+import {
+  runAndPersistHevcBench,
+  type RunAndPersistDeps,
+} from '../pipeline/hevcBenchOrchestrator';
+import { HevcBenchAbortError } from '../pipeline/hevcBench';
 
 const DRAG_DISMISS_PX = 100;
 const DRAG_DISMISS_VELOCITY_PX_MS = 0.5;
@@ -51,6 +57,8 @@ export interface SettingsSheetProps {
   isStandaloneOverride?: boolean;
   /** テスト用: ストレージ情報の取得を差し替え可能。 */
   fetchStorageInfo?: () => Promise<StorageInfo>;
+  /** テスト用: HEVC ベンチ orchestrator の依存を差し替え可能 (bench mock 等)。 */
+  hevcBenchDeps?: RunAndPersistDeps;
 }
 
 function detectStandalone(): boolean {
@@ -71,6 +79,7 @@ export default function SettingsSheet({
   envCheck,
   isStandaloneOverride,
   fetchStorageInfo,
+  hevcBenchDeps,
 }: SettingsSheetProps) {
   const preset = useSettingsStore((s) => s.preset);
   const setPreset = useSettingsStore((s) => s.setPreset);
@@ -78,6 +87,7 @@ export default function SettingsSheet({
   const dismissCameraTip = useSettingsStore((s) => s.dismissCameraTip);
   const language = useSettingsStore((s) => s.language);
   const setLanguage = useSettingsStore((s) => s.setLanguage);
+  const hevcBench = useSettingsStore((s) => s.hevcBench);
 
   const t = useT();
   const { locale: currentLocale } = useI18n();
@@ -88,6 +98,8 @@ export default function SettingsSheet({
   const [isDragging, setIsDragging] = useState(false);
   /** 閉じアニメ中も DOM を残すために、open を遅延させて反映する mounted フラグ。 */
   const [mounted, setMounted] = useState(open);
+  /** V2: HEVC ベンチ実行中フラグ。re-run ボタンを disable + spinner 表示するため。 */
+  const [benchRunning, setBenchRunning] = useState(false);
 
   const dragStartRef = useRef<{ y: number; t: number } | null>(null);
   const dragLastRef = useRef<{ y: number; t: number } | null>(null);
@@ -216,6 +228,30 @@ export default function SettingsSheet({
     },
     [setPreset],
   );
+
+  /** V2: HEVC ベンチを手動実行。実行中は disable + spinner、完了/失敗で toast。 */
+  const handleRunBench = useCallback(async () => {
+    if (benchRunning) return;
+    setBenchRunning(true);
+    try {
+      const result = await runAndPersistHevcBench({}, hevcBenchDeps);
+      useToastStore.getState().show(
+        t('settings.hevcBench.done', { speedup: result.speedup.toFixed(2) }),
+        { kind: 'info' },
+      );
+    } catch (err) {
+      if (err instanceof HevcBenchAbortError) {
+        // ユーザがキャンセル相当 (現状は abort 経路なし、defensive)
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      useToastStore.getState().show(t('settings.hevcBench.failed', { error: msg }), {
+        kind: 'error',
+      });
+    } finally {
+      setBenchRunning(false);
+    }
+  }, [benchRunning, hevcBenchDeps, t]);
 
   // ---- Drag-to-dismiss ----
 
@@ -607,6 +643,76 @@ export default function SettingsSheet({
               })}
             </div>
           </section>
+
+          {/* ---- V2: HEVC 並列ベンチマーク (HEVC 対応端末のみ表示) ----
+           *  CLAUDE.md ハマりどころ 17: VideoToolbox は単一 HW エンコーダなので、
+           *  2 並列 HEVC が逆に遅くなる端末があり、ベンチで動的に降格する。
+           *  ベンチ結果に応じて queueStore.effectiveParallelism() の出力が変わる。 */}
+          {envCheck.hevcEncode && (
+            <section aria-labelledby="settings-hevc-bench-heading" className="pb-4">
+              <h3
+                id="settings-hevc-bench-heading"
+                className="pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--label-secondary)]"
+              >
+                <Cpu aria-hidden="true" size={12} className="-mt-0.5 mr-1 inline-block" />
+                {t('settings.section.hevcBench')}
+              </h3>
+              <div className="rounded-2xl bg-[var(--surface)] px-4 py-3 text-sm">
+                <p className="leading-snug text-[var(--label-secondary)]">
+                  {t('settings.hevcBench.intro')}
+                </p>
+                {hevcBench === null ? (
+                  <p
+                    className="tabular pt-2 text-xs text-[var(--label-secondary)]"
+                    data-testid="settings-hevc-bench-status"
+                  >
+                    {t('settings.hevcBench.neverRun')}
+                  </p>
+                ) : (
+                  <div className="pt-2" data-testid="settings-hevc-bench-status">
+                    <p className="tabular text-xs">
+                      {t('settings.hevcBench.summary', {
+                        speedup: hevcBench.speedup.toFixed(2),
+                        parallelism: hevcBench.slowdown
+                          ? t('settings.hevcBench.parallelism1')
+                          : t('settings.hevcBench.parallelism2'),
+                      })}
+                    </p>
+                    <p className="tabular pt-1 text-xs text-[var(--label-secondary)]">
+                      {t('settings.hevcBench.lastRun', {
+                        ago: formatRelativeTime(hevcBench.ranAt),
+                      })}
+                    </p>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleRunBench}
+                  disabled={benchRunning}
+                  data-testid="settings-hevc-bench-run"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs text-[var(--accent)] transition-opacity active:opacity-60 disabled:cursor-wait disabled:opacity-40"
+                >
+                  {benchRunning ? (
+                    <>
+                      <Loader2
+                        aria-hidden="true"
+                        size={12}
+                        className="animate-spin motion-reduce:animate-none"
+                      />
+                      {t('settings.hevcBench.running')}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw aria-hidden="true" size={12} />
+                      {hevcBench === null
+                        ? t('settings.hevcBench.runButton')
+                        : t('settings.hevcBench.rerunButton')}
+                    </>
+                  )}
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* ---- バージョン情報 ---- */}
           <section aria-labelledby="settings-version-heading" className="pb-2">

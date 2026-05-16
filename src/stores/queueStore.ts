@@ -11,6 +11,7 @@ import {
   saveQueueItem,
   deleteQueueItem,
   getSetting,
+  setSetting,
 } from '../db/indexeddb';
 import { hasEnoughQuota } from '../platform/storage';
 import { findPreset } from '../lib/presets';
@@ -91,9 +92,13 @@ export type QueueStoreActions = {
    * - hevc + hevcBenchSlowdown=true なら 1 (VideoToolbox の単一リソース対策、ハマりどころ 17)
    * - その他は parallelism (1 or 2)
    * hevcBenchSlowdown が null (= 未計測) は false 扱い。
-   * 実機ベンチでの動的判定は V2 (TODOS.md「V2: HEVC 並列ベンチマーク」)。
+   * V2 で実機ベンチでの動的判定を実装 (hevcBench.ts + hevcBenchOrchestrator.ts)。
    */
   effectiveParallelism: (preset: Preset) => 1 | 2;
+  /** V2: HEVC bench の slowdown フラグを更新 + IndexedDB に永続化。
+   *  orchestrator (runAndPersistHevcBench) が bench 完了時に呼ぶ。
+   *  null を渡すと未計測扱いに戻す (テスト/設定リセット用)。 */
+  setHevcBenchSlowdown: (value: boolean | null) => Promise<void>;
   /**
    * 'queued' なアイテムを並列度の上限まで起動する。
    * 並列度は effectiveParallelism(preset) で per-preset に決まる。
@@ -364,6 +369,15 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     if (state.parallelism === 1) return 1;
     if (preset.codec === 'hevc' && state.hevcBenchSlowdown === true) return 1;
     return 2;
+  },
+
+  async setHevcBenchSlowdown(value) {
+    set({ hevcBenchSlowdown: value });
+    // IndexedDB に永続化。失敗は致命的でないので握り潰す
+    // (次回 init 時に古い値が読まれるだけで bench 自体は再実行される)。
+    await setSetting('hevcBenchSlowdown', value).catch(() => {});
+    // 並列度が変わったかもしれないので、queued アイテムがあれば再評価して起動
+    get().processNext();
   },
 
   processNext() {
