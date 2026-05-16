@@ -61,7 +61,9 @@ export const en: Messages = {
     clearAllAria: 'Clear all {count} completed items',
     clearAllCta: 'Clear completed ({count})',
     saveAllAria: 'Save all {count} completed items',
-    saveAllCta: 'Save all completed ({count})',
+    // V2: parallel structure with Clear ("Save completed" / "Clear completed"),
+    // and shorter to fit alongside Clear button on 393px iPhone Standard width.
+    saveAllCta: 'Save completed ({count})',
   },
 
   wakeLock: {

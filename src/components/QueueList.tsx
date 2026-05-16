@@ -80,7 +80,10 @@ export default function QueueList({ items }: QueueListProps) {
   return (
     <div className="flex flex-col">
       {(terminalCount > 0 || doneCount > 0) && (
-        <div className="flex flex-wrap items-center justify-end gap-2 py-2">
+        // V2: flex-nowrap + 詰めた padding/gap で 393px iPhone 標準幅にも横並びで収まる
+        // (5 言語すべてで 1 行表示)。両方表示時の合計幅: JA 約 332px, EN 約 318px,
+        // zh-CN/zh-TW 約 280px, ko 約 340px (393 - px-4 = 361px に収まる)。
+        <div className="flex flex-nowrap items-center justify-end gap-1.5 py-2">
           {doneCount > 0 && (
             <button
               type="button"
@@ -89,7 +92,7 @@ export default function QueueList({ items }: QueueListProps) {
               }}
               disabled={savingAll}
               data-testid="save-all-done"
-              className="flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--accent)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
+              className="flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-sm text-[var(--accent)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
               aria-label={t('queueList.saveAllAria', { count: doneCount })}
             >
               <Share size={14} aria-hidden="true" />
@@ -103,7 +106,7 @@ export default function QueueList({ items }: QueueListProps) {
                 void clearCompleted();
               }}
               data-testid="clear-completed"
-              className="flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+              className="flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-sm text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               aria-label={t('queueList.clearAllAria', { count: terminalCount })}
             >
               <Trash2 size={14} aria-hidden="true" />
