@@ -15,6 +15,7 @@
 import {
   AudioSampleSink,
   EncodedPacket,
+  EncodedPacketSink,
   VideoSampleSink,
   type AudioCodec,
   type VideoCodec,
@@ -25,6 +26,7 @@ import { applyRotation } from './rotate';
 import { convertToBt709 } from './colorConvert';
 import { createMuxer, createOpfsStreamTarget, type MuxerHandle } from './mux';
 import { demuxInput, type DemuxResult } from './demux';
+import { decideAudioPassthrough, type PassthroughDecision } from './audioPassthrough';
 import type { Preset } from '../lib/types';
 
 // ---- 型 ----
@@ -216,11 +218,21 @@ export async function transcode(
       totalFrames: Math.max(1, Math.round(dem.durationSec * dem.fps)),
     };
 
+    // V2.x (C1): 音声 pass-through 判定。条件を満たせば AudioDecoder/AudioEncoder を
+    // 完全にスキップして EncodedPacket を muxer に直接渡す。
+    // 失敗条件 (codec / sample rate / bitrate ほか) で fallback して通常の re-encode 経路へ。
+    const audioPassDecision: PassthroughDecision =
+      dem.audioTrack && muxer.audioSource
+        ? await decideAudioPassthrough(dem, opts.preset)
+        : { passthrough: false, reason: 'no audio track' };
+
     // 音声パイプラインを video と並行で走らせる (両方 await)
     const videoTask = runVideoPipeline(dem, outputDims, muxer, opts, progress, sharedShiftSec);
     const audioTask =
       dem.audioTrack && muxer.audioSource
-        ? runAudioPipeline(dem, muxer, opts, sharedShiftSec)
+        ? audioPassDecision.passthrough
+          ? runAudioPassthrough(dem, muxer, opts, sharedShiftSec, audioPassDecision.decoderConfig)
+          : runAudioPipeline(dem, muxer, opts, sharedShiftSec)
         : Promise.resolve();
     await Promise.all([videoTask, audioTask]);
 
@@ -465,6 +477,72 @@ async function runAudioPipeline(
   }
 
   await Promise.all(pendingAdds);
+}
+
+// ---- 内部: audio pass-through (V2.x C1) ----
+
+/**
+ * 音声を decode/encode せず、入力 EncodedPacket を muxer に直接渡す。
+ *
+ * 採用条件は `audioPassthrough.ts` の `decideAudioPassthrough()` が事前判定済み。
+ * この関数に来た時点で:
+ * - dem.audioTrack は AAC-LC で sample rate / channels は AAC-LC 互換
+ * - decoderConfig は valid (description 含む)
+ * - 入力 bitrate ≤ preset target × 0.85
+ *
+ * AV 同期のロジック:
+ * - sharedShiftSec は video pipeline と共通 (負の入力 timestamp を 0 始まりに揃える)
+ * - EncodedPacket.timestamp は秒、`clone({ timestamp })` で新規 packet に shift 適用
+ * - 入力の packet timestamp をそのまま使うため、再エンコードの量子化ドリフトなし。
+ *   むしろ AudioEncoder.configure(sampleRate) 経由の 1024-sample 量子化を回避する分、
+ *   再エンコード経路より同期精度が高い。
+ *
+ * 失敗時の挙動:
+ * - mediabunny の add() が reject したら通常通り TranscodeError として bubble up
+ * - cancel 受信時は in-flight packet を discard して TranscodeCancelledError
+ */
+async function runAudioPassthrough(
+  dem: DemuxResult,
+  muxer: MuxerHandle,
+  opts: TranscodeOptions,
+  /** A/V 共通 shift (秒)。0 ならシフト無し。負の値は事前計算で除外済 (上位で max(0, ...))。 */
+  sharedShiftSec: number,
+  decoderConfig: AudioDecoderConfig,
+): Promise<void> {
+  if (!dem.audioTrack || !muxer.audioSource) return;
+  const audioSource = muxer.audioSource;
+
+  // mediabunny の add() は内部で writer backpressure を制御する Promise を返す。
+  // ここでは Promise.all で並列に投入せず、シーケンシャル await で順序保証する。
+  // (EncodedAudioPacketSource は「decode order で add」の仕様で、AAC は B-frame
+  //  ないので decode order = presentation order、シーケンシャルで問題なし。)
+
+  // mediabunny の公開 API: `EncodedPacketSink` 経由で packets にアクセス。
+  const sink = new EncodedPacketSink(dem.audioTrack);
+  let packet: EncodedPacket | null = await sink.getFirstPacket();
+  if (!packet) return; // 音声 packets が無い (実際には decideAudioPassthrough が弾くはず)
+
+  // 初回 add のみ decoderConfig を metadata で渡す (mediabunny ESDS box 構築用)
+  let isFirstAdd = true;
+
+  while (packet) {
+    if (opts.signal.aborted) throw new TranscodeCancelledError();
+
+    // sharedShiftSec > 0 のときだけ clone() で timestamp 書き換え。
+    // それ以外は元 packet をそのまま渡してアロケーション節約。
+    const outPacket =
+      sharedShiftSec > 0
+        ? packet.clone({ timestamp: packet.timestamp + sharedShiftSec })
+        : packet;
+
+    const meta: EncodedAudioChunkMetadata | undefined = isFirstAdd
+      ? { decoderConfig }
+      : undefined;
+    await audioSource.add(outPacket, meta);
+    isFirstAdd = false;
+
+    packet = await sink.getNextPacket(packet);
+  }
 }
 
 // ---- 進捗エミット (200ms スロットル) ----
