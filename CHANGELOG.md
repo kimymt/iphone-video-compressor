@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.3] - 2026-05-16 — iOS Safari で「動画を選択」が反応しない問題を修正
+
+実機 iPhone で起動直後の初回タップ + cancel 後の再タップで file picker が開かない問題が
+報告された。`FilePicker.handleClick` で `inputRef.current?.click()` が `await unlockAudio()`
+の**後**に呼ばれており、iOS Safari の transient user activation が await で消費されて
+file picker が silent drop されていた。
+
+PR [#4 (cf057fb)](https://github.com/kimymt/iphone-video-compressor/pull/4) で Wake Lock を
+同じパターンで fix していたが、`input.click()` の修正が漏れていた。加えて cancel 後は
+`input.value` が残っていて iOS Safari が「同じ値」扱いで picker 再表示を skip する第 2 の
+問題も同居していた。
+
+### Fixed
+
+- **`src/components/FilePicker.tsx`**: `handleClick` を非 async 化し、user activation
+  を必要とする API (`wakeLockManager.acquire` → `input.value = ''` → `input.click()` →
+  `void unlockAudio()`) をすべて click event 同期で発火するよう変更。
+- **`unlockAudio` は fire-and-forget** に切替: `AudioContext.resume()` は呼び出し時点で
+  sticky activation 内なので await 不要。完了サウンドは別 tick の `playDoneSound` が
+  再 resume を試行するので待つ必要がない。
+- **`input.value = ''` を click の直前に必ず実行**: iOS Safari は前回値が残っていると
+  picker 再表示を silent drop する (同じファイル選択でも `change` が発火しない既知の
+  挙動と同根)。
+
+### Internal — tests
+
+- **`FilePicker.test.tsx` +2 件**:
+  - regression: button click で `input.click()` が同期発火される (await 前)
+  - regression: 連続タップで `input.value` が毎回 `''` にリセットされる
+
+### Internal — docs
+
+- **`CLAUDE.md` ハマりどころ #34 追加**: `<input type=file>.click()` も `await` 不可。
+  `value = ''` リセット必須。Wake Lock (#29) と同根の制約だが、`.click()` 自体が
+  同期で発火する必要がある点を明文化。
+
+### 期待効果
+
+- **起動直後の初回タップ**: file picker が開く ✓
+- **cancel 後の再タップ**: file picker が開く ✓
+- 既存の Wake Lock / Audio unlock / queue 動作には影響なし (Vitest 613/613 緑)。
+
+---
+
 ## [1.2.2] - 2026-05-16 — 音声 re-encode の pass-through (C1)
 
 「upload → compress → save」を体感速度で縮める第 4 改善 (A1/A2/D2 に続く)。iPhone 標準の
