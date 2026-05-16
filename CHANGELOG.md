@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [1.2.0] - 2026-05-16 — V2: HEVC bench + バルク保存
+
+V1.1.0 出荷後の第 2 機能バッチ。VideoToolbox の単一 HW エンコーダ制約を実測検出する
+**HEVC 並列ベンチマーク**、N 件圧縮動画を 1 タップで Photos に取り込む **「完了をすべて保存」**
+ボタン、393px iPhone Standard での **横並びボタンレイアウト**、そして /ship の adversarial
+review で見つかった race + 並列 bench 競合の修正。Vitest 483 → 562 (+79)。
 
 ### Added — V2: 完了動画のバルク保存
 
@@ -35,10 +40,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **i18n 5 言語** に `settings.hevcBench.*` の 11 キー (intro / summary / lastRun / running / runButton / rerunButton / neverRun / parallelism1 / parallelism2 / failed / done) と `settings.section.hevcBench` を追加
 - **`formatRelativeTime(ms, locale)`** in `src/lib/format.ts` — `Intl.RelativeTimeFormat` ベースの「N 分前」「N 日前」表示ヘルパー。iOS Safari 14+ で利用可、未対応環境は英語フォールバック
 
+### Fixed — Adversarial review (`/ship` 内)
+
+- **`shareAllDone` race condition** — `readFromOpfs` が返す File は OPFS file handle の lazy
+  reference。share() 中にユーザが「完了をすべて削除」や個別 remove() を発火すると iOS
+  Photos に空動画/truncated data が渡る。修正: `file.arrayBuffer()` で即時 memory にコピー
+  してから share、OPFS 削除との race 窓を消す
+- **bench inflight lock の bypass** — SettingsSheet「再実行」ボタンが `runAndPersistHevcBench`
+  を直接呼ぶため、`maybeAutoRunHevcBench` の module-level inFlight lock を素通り。
+  double-tap で 2 並列 bench (計 6 並列 HEVC encoder) → VideoToolbox crash や測定値
+  不安定の risk。修正: inFlight lock を `runAndPersistHevcBench` 側に移動し、両 caller
+  path で共通化 (double-tap 時は同一 promise を返す)
+
 ### Internal
 
 - **`HevcBenchAbortError`** を export — `name === 'AbortError'` (DOM 慣習に合わせる)
 - **`MAX_BENCH_AGE_MS = 90 * 24 * 60 * 60 * 1000`** — 自動再ベンチの閾値、`shouldRunBench` で使用 (iOS バージョンアップ後の VideoToolbox 挙動変化に対応)
+- **jsdom v25 用 `Blob.prototype.arrayBuffer` polyfill** in `tests/setup.ts` (FileReader 経由、本番 iOS Safari 14+ には不要)
 
 ### テスト
 
