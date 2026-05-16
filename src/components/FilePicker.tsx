@@ -16,6 +16,13 @@ import type { PresetKey } from '../lib/types';
 // その前の await で消費される) ため、`change` 経由の acquire は NotAllowedError になる。
 // `click` イベントは確実に user activation を持つので、ここで request を発火する。
 //
+// v1.2.3: `<input type=file>.click()` も同じ user activation 制約を持つ。
+// 以前は `await unlockAudio()` の後に `inputRef.current?.click()` を呼んでいたが、
+// iOS Safari は await を挟むと file picker が silent drop される (CLAUDE.md ハマりどころ #34)。
+// click を await の前に同期発火し、unlockAudio は fire-and-forget に切り替えた。
+// 加えて、前回値が残っていると iOS Safari は picker 再表示を skip するので、
+// click の直前に `input.value = ''` でリセットする。
+//
 // キャンセル検出: file picker をキャンセルした場合、change イベントは発火しないので
 // Wake Lock が leak する。60 秒タイムアウトで isProcessing=false なら release する。
 
@@ -55,18 +62,32 @@ export default function FilePicker({ preset, onResult, disabled = false }: Props
     }, CANCEL_DETECT_MS);
   };
 
-  const handleClick = async (): Promise<void> => {
+  const handleClick = (): void => {
     if (busy || disabled) return;
 
-    // click event の user activation を即座に Wake Lock の request に渡す。
-    // navigator.wakeLock.request('screen') は wakeLockManager.acquire() の中で
-    // 同期的に call され、await はその Promise の解決待ち。
-    // await unlockAudio() より前に呼ぶことで activation 消費の影響を受けない。
+    // iOS Safari の transient user activation は await を挟むと消費されるため、
+    // user-activation を必要とする API はすべて click event 同期で発火する:
+    //   1. navigator.wakeLock.request('screen')  (wakeLockManager.acquire 内で同期 call)
+    //   2. <input type=file>.click()              (file picker を開く)
+    //   3. AudioContext.resume()                  (unlockAudio 内で同期 call)
+    // unlockAudio を await すると 3 は成功するが、その後の 2 が「user gesture 切れ」で
+    // silent drop される (v1.2.3 で実機 iPhone から再現報告)。
     void wakeLockManager.acquire();
     scheduleCancelDetect();
 
-    await unlockAudio();
-    inputRef.current?.click();
+    // CLAUDE.md ハマりどころ #34: 前回値が残っていると iOS Safari は picker 再表示を
+    // skip する (同じファイル選択でも change が発火しない既知の挙動と同根)。click 前に
+    // 必ず value='' でリセットする。
+    const input = inputRef.current;
+    if (input) {
+      input.value = '';
+      input.click();
+    }
+
+    // AudioContext.resume() は呼び出し時点で sticky activation 内なので、await せず
+    // fire-and-forget でも成功する。完了サウンドは別 tick の playDoneSound が再 resume
+    // を試行するので、unlock を待つ必要はない。
+    void unlockAudio();
   };
 
   const handleChange = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {

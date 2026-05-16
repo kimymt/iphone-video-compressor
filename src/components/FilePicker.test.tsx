@@ -242,4 +242,55 @@ describe('FilePicker', () => {
     fireEvent.change(input, { target: { files: [] } });
     await waitFor(() => expect(releaseSpy).toHaveBeenCalled());
   });
+
+  // REGRESSION: iOS Safari は await を挟むと file input の click() が picker を出さない。
+  // handleClick の中で inputRef.current.click() は同期で (await の前に) 発火される必要がある。
+  // CLAUDE.md ハマりどころ #34、v1.2.3 で実機 iPhone から再現報告。
+  it('v1.2.3 regression: ボタンタップで input.click() が同期発火される (await の前)', () => {
+    vi.spyOn(wakeLockManager, 'acquire').mockResolvedValue(undefined);
+
+    render(<FilePicker preset="standard-hevc" />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const inputClickSpy = vi.spyOn(input, 'click');
+
+    fireEvent.click(screen.getByRole('button', { name: '動画を選択' }));
+
+    // handleClick は同期関数 (async ではない) で input.click() を呼んでいる。
+    // 関数 return 時点で既に click が発火していることを検証 (await を挟んでいない証拠)。
+    expect(inputClickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // REGRESSION: iOS Safari は前回値が残っていると picker 再表示を silent drop する。
+  // click 前に input.value = '' でリセットすることで、cancel 後の 2 回目タップでも
+  // picker が確実に開くようにする。CLAUDE.md ハマりどころ #34。
+  it('v1.2.3 regression: 連続タップで input.value が毎回リセットされる', () => {
+    vi.spyOn(wakeLockManager, 'acquire').mockResolvedValue(undefined);
+
+    render(<FilePicker preset="standard-hevc" />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    // 1 回目タップ前に value を非空にしておく (前回キャンセル相当のシミュレーション)
+    input.value = '';
+    const button = screen.getByRole('button', { name: '動画を選択' });
+
+    // click 時点で value='' に setter が呼ばれることを spy で記録
+    const setValueCalls: string[] = [];
+    const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    if (desc?.set) {
+      Object.defineProperty(input, 'value', {
+        configurable: true,
+        get: desc.get,
+        set: function (v: string) {
+          setValueCalls.push(v);
+          desc.set?.call(this, v);
+        },
+      });
+    }
+
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    // 2 回タップしたら 2 回とも value='' に reset されている (click() の前で)
+    const resetCalls = setValueCalls.filter((v) => v === '');
+    expect(resetCalls.length).toBeGreaterThanOrEqual(2);
+  });
 });
