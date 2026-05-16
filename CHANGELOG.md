@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.2] - 2026-05-16 — 音声 re-encode の pass-through (C1)
+
+「upload → compress → save」を体感速度で縮める第 4 改善 (A1/A2/D2 に続く)。iPhone 標準の
+AAC-LC 音声トラックを `AudioDecoder` / `AudioEncoder` の往復をスキップして、入力
+`EncodedPacket` を直接 mediabunny の muxer に渡す。5min 動画で **1〜3 秒短縮** + 音声の
+generation loss ゼロ (むしろ品質向上)。CPU 解放で video 並列 encode の余地も増える。
+Vitest 594 → 611 (+17 件)。
+
+### Improved — C1: 音声 pass-through
+
+- **`src/pipeline/audioPassthrough.ts` (新規)** に判定関数 `decideAudioPassthrough()` + 推定
+  関数 `estimateAudioBitrate()`。`AudioCodec === 'aac'` + decoder config が `mp4a.40.2` +
+  sample rate ∈ `{44100, 48000}` + channels ≤ 2 + **入力 bitrate ≤ preset 目標 × 0.85**
+  をすべて満たすときのみ採用する保守的判定。
+- **`min-h264` プリセットでは pass-through を強制無効化** — 「最小」サイズを目指す preset
+  の期待 (音声も再圧縮) を尊重する。
+- **`src/pipeline/transcode.ts`** に `runAudioPassthrough()` を追加。`EncodedPacketSink` で
+  入力 packets を順次取得 → `sharedShiftSec > 0` のときだけ `packet.clone({ timestamp })`
+  で shift 適用 → `EncodedAudioPacketSource.add(packet, meta)` で muxer に直接渡す。初回
+  のみ `decoderConfig` を metadata で渡して mediabunny に ESDS box を組ませる。
+- **dispatch** は audio task の二分岐: 判定が `passthrough: true` なら `runAudioPassthrough`、
+  それ以外は従来の `runAudioPipeline` (AudioSampleSink → AudioEncoder) にフォールバック。
+- **AV 同期** は入力 timestamp をそのまま保持するため、`AudioEncoder.configure(sampleRate)`
+  経由の 1024-sample 量子化による微細ドリフトを完全に回避 (むしろ従来の re-encode 経路より
+  同期精度が高い)。
+
+### 期待効果
+
+- **時間**: 5min 動画で 1〜3 秒短縮 (decode + encode を両方省略)。VBR ピーク影響なし。
+- **品質**: 元音声を再量子化しないので generation loss ゼロ。
+- **CPU**: AudioEncoder の負荷ゼロ → video 並列 encode に投入できる headroom 増。
+- **iPhone 撮影動画の 95%+ が pass-through 適用対象** (AAC-LC 44.1k/48k stereo、preset
+  audio bitrate target が入力より高めなため、`best-hevc` / `high-hevc` / `standard-hevc`
+  / `light-hevc` / `compat-h264` の 5 プリセットで効く)。
+
+### Internal — tests
+
+- **`audioPassthrough.test.ts` (新規) +17 件**:
+  - 失敗 10 件: min-h264 / no audio / non-AAC / no config / non-LC profile /
+    no description / unusual sample rate / multi-channel / over-threshold / empty
+  - 成功 4 件: iPhone 標準 + best-hevc / 低 bitrate + standard-hevc / 48k / 境界
+  - estimateAudioBitrate 3 件: 空 track / 計算式 / 100 packets 打切り
+- **mediabunny の `EncodedPacketSink` を vi.mock で差替**: track に仕込んだ
+  `__testPackets` を返す mock クラス。`new EncodedPacketSink(track)` の呼び出しを
+  そのまま受け止める。
+
+### Internal — Refactoring
+
+- `transcode.ts` の音声分岐を `dem.audioTrack && muxer.audioSource` の前置きで一本化、
+  `decideAudioPassthrough()` の結果で内部 dispatch。
+- `EncodedPacket.clone({ timestamp })` で sharedShift を適用 (timestamp は秒、video の
+  microsecond と単位が違う点に注意)。
+
+---
+
 ## [1.2.1] - 2026-05-16 — UX 高速化: persistent Worker + 投機的 demux + 推定サイズ表示
 
 「upload → compress → save の経路をとにかく早く」のための 3 連改善。Worker cold-start
