@@ -216,4 +216,4 @@ head -c 30000 tests/fixtures/landscape-1080p-baseline-h264-1s.mp4 \
 
 ## 许可证
 
-本仓库为个人项目,目前尚未设定许可证。
+[MIT License](./LICENSE) — Copyright (c) 2026 kimymt

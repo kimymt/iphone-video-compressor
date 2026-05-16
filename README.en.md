@@ -216,4 +216,4 @@ The 4 PNGs in `public/icons/` (192 / 512 / maskable / apple-touch-icon 180) are 
 
 ## License
 
-This is a personal project. No license has been chosen at this time.
+[MIT License](./LICENSE) — Copyright (c) 2026 kimymt

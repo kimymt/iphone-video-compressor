@@ -216,4 +216,4 @@ head -c 30000 tests/fixtures/landscape-1080p-baseline-h264-1s.mp4 \
 
 ## 라이선스
 
-이 저장소는 개인 프로젝트이며, 현시점에 라이선스는 정해지지 않았습니다.
+[MIT License](./LICENSE) — Copyright (c) 2026 kimymt

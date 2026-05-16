@@ -216,4 +216,4 @@ head -c 30000 tests/fixtures/landscape-1080p-baseline-h264-1s.mp4 \
 
 ## ライセンス
 
-このリポジトリは個人プロジェクトであり、現時点でライセンスは未定です。
+[MIT License](./LICENSE) — Copyright (c) 2026 kimymt
