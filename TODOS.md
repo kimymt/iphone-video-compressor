@@ -45,91 +45,46 @@ Phase 0 もしくは Phase 6 の最初に `gstack design` (OpenAI API 経由) �
 
 ---
 
-## V2: カスタムプリセット
+## スコープ除外（2026-05-16 決定）
 
-**何:**
-ユーザーがコーデック・解像度・動画/音声ビットレート・ビットレートモード（CBR/VBR）を自由に設定できるダイアログ + スライダー UI。`PresetKey: 'custom'` を復活させ、`CustomPreset = Omit<Preset, 'key'> & { key: 'custom' }` 型を導入。`SettingsPanel` にスライダー UI を追加し、`localStorage` に保存。
+以下の 2 機能は V2 候補から正式に除外。コア「圧縮して共有」フローへの集中と、外部ツールで代替可能な機能を抱え込まない方針。
 
-**Why:**
-プリセットだけで足りないこだわり派ユーザー（撮影者、編集者、特殊用途）向け。プロにとっては有用だが、MVP の 95% 以上のユーザーは固定 6 プリセットでカバーできる。
+### ❌ カスタムプリセット
 
-**Pros:**
-- カスタムプリセットを保存しておけば、毎回同じ設定でワンタップ圧縮できる
-- 上限ビットレート指定で「クラウド側の制約に合わせる」ユースケースに対応
-- 解像度・FPS の手動指定で意図的な低解像度ダウンサンプリングが可能
+**理由:** 詳細な圧縮設定（コーデック・解像度・ビットレート個別指定）が必要なユーザーは、既存の専門ツール (HandBrake / FFmpeg / iMovie 等) を使えば足りる。本アプリは「iPhone から数タップで適切に圧縮して共有」を目的とし、固定 6 プリセットでカバーできない領域は守備範囲外と判断。
 
-**Cons:**
-- UI スコープが膨らむ（コーデック切替、ビットレートスライダー、解像度プリセット、音声制御）
-- バリデーション（無効な組み合わせを弾く）が必要
-- カスタム値の保存・読み込み・export/import 仕様を定義する必要
+**含意:**
+- `PresetKey` の union に `'custom'` を再導入しない
+- `SettingsPanel` にスライダー UI を追加しない
+- CLAUDE.md 機能要件 #3 の「カスタムプリセットは V2」記述は事実上「対応しない」に変わる（次回 CLAUDE.md 改訂時に明示）
 
-**スコープ:**
-- 設計 + 実装で 3〜5 日（ダイアログ UI、バリデーション、保存読み込み、テスト）
+### ❌ ComparePreview 同期再生 + PiP
 
-**Context:**
-- レビュー時の決定 C2 で MVP から削除
-- `PresetKey` の union から `'custom'` を削除済み
-- 復活させるときは `types.ts` の `PresetKey` に追加し、`presets.ts` に `buildCodecString()` が custom も扱えるよう拡張、`SettingsPanel` にダイアログ追加
+**理由:** 圧縮前後の比較は既存の動画プレイヤー (Photos.app の Picture in Picture、QuickTime、VLC 等) で十分実現可能。本アプリ内に同期再生 UI を抱え込むと、2 動画同時デコードのメモリコスト + 同期状態管理 + iOS Safari PiP 制約に対する継続メンテが発生し、コア機能への投資を圧迫する。
 
-**Depends on:** なし（MVP 出荷後すぐ着手可能）
+**含意:**
+- `src/components/ComparePreview.tsx` を作らない
+- `QueueItem` 完了時に「比較プレビュー」ボタンを追加しない
+- 圧縮前後の画質確認が必要なユーザーには README で外部プレイヤー利用を案内（任意・将来対応）
 
----
+### ❌ HEVC HDR 出力（旧 V2+1 候補）
 
-## V2: ComparePreview 同期再生 + Picture in Picture
+**理由:** HDR 維持で圧縮したいプロユーザー (映像制作者、HDR 素材を扱う編集者) は既存の専門ツール (Final Cut Pro / DaVinci Resolve / Compressor / HandBrake nightly 等) を使えば足りる。本アプリは「iPhone から数タップで適切に圧縮して共有」が目的で、Photos / AirDrop / iMessage への共有では受信側が HDR 再生対応とは限らないため、SDR (BT.709) に統一する現状の方がコア機能としては正しい。HDR Main 10 Profile (`hvc1.2.4.L153.B0`) の capability 分岐 + ファイルサイズ増 + 「HDR→SDR が欲しい」要望との競合を考慮し、抱え込まない方針。
 
-**何:**
-入力（圧縮前）と出力（圧縮後）の `<video>` を縦並びで同時再生する `src/components/ComparePreview.tsx`。タイムラインスライダーで両方同時シーク、PiP ボタンで片方を画中画に出して比較。`QueueItem` 完了時に「比較プレビュー」ボタンとして表示。
+**含意:**
+- `colorConvert.convertToBt709()` の BT.2020 → BT.709 トーンマッピング方針は永続（HDR→SDR 一方向）
+- `buildHevcCodecString()` に Main 10 Profile (`hvc1.2.4.*`) を追加しない
+- `capability.ts` に `hevcMain10Encode` フラグを追加しない
 
-**Why:**
-「圧縮で画質が劣化していないか」を視覚的に確認したいユーザーには有用。コアの「圧縮して共有」フローには不要なポリッシュ機能。
+### ❌ mid-stream resume（中断地点からの処理再開）
 
-**Pros:**
-- 圧縮レベル（プリセット）選びの判断材料になる
-- ビフォーアフター動画として SNS 共有用にも使える
-- 信頼性アピール（「ちゃんと圧縮できてる」を見せる UX）
+**理由:** 5 分超の 4K 動画を中断耐性のある形で圧縮したいユーザーは、デスクトップの専門ツール (HandBrake / FFmpeg / Compressor 等、いずれもネイティブの中断再開機構を持つ) を使えば足りる。本アプリは「iPhone で短〜中尺動画を数タップで圧縮して共有」が目的で、長尺・高解像度・中断耐性を要求するワークフローはデスクトップ領域。技術的にも WebCodecs の内部状態シリアライズは仕様未定義で、各 codec の reconfigure を自前実装 + IDR フレーム境界管理 + 再現性のある「途中で死ぬ」テストフィクスチャ作成のコストは「mobile での quick compress」ユースケースに釣り合わない。長尺動画はユーザー側で事前にクリップ分割するワークフロー想定。
 
-**Cons:**
-- メモリ消費が増える（2 つの動画を同時にデコード）
-- 同期再生の状態管理がトリッキー（早送り/巻き戻し/シーク同期）
-- iOS Safari の PiP は制約あり（同時に PiP できるのは 1 ウィンドウのみ）
-
-**スコープ:**
-- 1〜2 日（同期再生 UI、PiP API、状態管理、テスト 5 ケース）
-
-**Context:**
-- レビュー時の決定 TODO-1 で MVP から削除
-- 仕様書のディレクトリ構造からも `ComparePreview.tsx` を削除済み
-
-**Depends on:** Phase 5（ShareButton + WakeLock）完了後
-
----
-
-## V2: mid-stream resume（中断地点からの処理再開）
-
-**何:**
-アプリ再起動後に、処理が中断していたジョブを中断地点から再開できるようにする。VideoDecoder / VideoEncoder / muxer の内部状態をシリアライズして OPFS に保存、復元時にリストア。
-
-**Why:**
-長い 4K 動画の処理中にアプリが落ちると、現状（A4 の決定で `processing → queued` リセットして再処理）はゼロから処理し直す必要があり、ユーザー時間とバッテリーを消費する。長動画ユーザーには大きな価値。
-
-**Pros:**
-- 5 分超の 4K HDR 動画でも安全に処理できる
-- バッテリー切れ・アプリ kill が許容範囲になる
-
-**Cons:**
-- WebCodecs の状態シリアライズが事実上未定義
-- 各 codec の reconfigure フローを自前で書く必要
-- 復元後の最初の数フレームが破綻するリスク（IDR フレーム境界の管理）
-- テストフィクスチャ作りが難しい（再現性のある「途中で死ぬ」シナリオ）
-
-**スコープ:**
-- 5〜10 日
-
-**Context:**
-- レビュー時の A4 で「MVP では processing → queued リセット、中途ファイル削除」と決定済み
-- mid-stream resume はそれを上回るオーバーリーチとして V2 に退避
-
-**Depends on:** 安定した MVP（Phase 7 完了）後
+**含意:**
+- A4 決定（`processing → queued` リセット + 中途 OPFS 出力削除）は永続方針
+- `transcode.ts` に checkpoint / serialization フックを追加しない
+- 「ジョブが失敗した」UI は現状の `failed` / `cancelled` の二択のまま
+- README に「長尺動画はデスクトップツールで分割してから処理する」案内を追加（任意・将来対応）
 
 ---
 
@@ -239,30 +194,6 @@ UI が 5 言語対応していても、ホーム画面追加時のアプリ名�
 - README / CHANGELOG / TODOS 多言語化: 各 0.5 日 + 継続メンテ
 
 **Depends on:** なし
-
----
-
-## 検討: HEVC HDR 出力（V2 + 1）
-
-**何:**
-出力動画も HDR (BT.2020 HLG) で出すオプション。現状は MVP で SDR (BT.709) に統一しているが、将来的に HDR→HDR トランスコードを選べるようにする。
-
-**Why:**
-iPhone 12+ で HDR 録画したユーザーが「画質を保ったまま圧縮したい」とき、SDR に落とすと色情報が劣化する。
-
-**Pros:**
-- 4K HDR ユーザーには大きな価値
-- AirDrop で他の iPhone に送れば HDR で再生できる
-
-**Cons:**
-- HEVC Main 10 Profile が必要（`hvc1.2.4.L153.B0`）、capability check で別判定
-- ファイルサイズが SDR より大きくなる
-- 「HDR を SDR に落とす」ニーズの方が多いかも知れない（後で確認）
-
-**スコープ:**
-- 3〜5 日
-
-**Depends on:** MVP（V1）出荷後にユーザーフィードバックを集めてから判断
 
 ---
 

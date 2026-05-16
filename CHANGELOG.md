@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.1] - 2026-05-16 — UX 高速化: persistent Worker + 投機的 demux + 推定サイズ表示
+
+「upload → compress → save の経路をとにかく早く」のための 3 連改善。Worker cold-start
+(500ms〜2 秒、CLAUDE.md ハマりどころ 18) を消し、OPFS 書き込みと並列に demux を走らせ、
+投入直後から「予測 ~38MB」を見せる。実時間と体感速度の両方を縮める。あわせて TODOS.md の
+V2 候補から「対応しない」決定済みの 4 件 (カスタムプリセット / ComparePreview / HEVC HDR
+出力 / mid-stream resume) をスコープ除外セクションに整理。Vitest 562 → 594 (+32)。
+
+### Improved — A1: persistent Worker pool
+
+- **transcode worker を `parallelism` ぶん pre-spawn**、再利用 (terminate しない) ことで
+  cold-start を全 transcode で消す。初回 add で 500ms〜2 秒、N 件投入なら N 回ぶん救う
+- **`queueStore.ts`** に `transcodePool: Worker[]` + `inUseTranscode: Set<Worker>` +
+  `peekWorker: Worker | null` を追加。`acquireTranscodeWorker()` / `releaseTranscodeWorker()`
+  / `getPeekWorker()` / `prewarmTranscodePool(count)` のヘルパで lifecycle 管理
+- **`init()` で `prewarmTranscodePool(parallelism)`** を実行 (失敗は致命的でないので無視、
+  後続 `acquireTranscodeWorker()` で lazy spawn にフォールバック)
+- **Worker error イベントで pool から自動 drop** + `terminate()`。次回 acquire 時に fresh
+  worker が spawn される
+- **`runTranscodeJob` から `worker.terminate()` を撤去** (compressor-client.ts) —
+  terminal メッセージ受信時は listener 解除のみで pool に返却。次ジョブで再利用
+- **`_resetWorkerPoolForTest()` を export** — テスト後の worker leak を防ぐ
+
+### Improved — A2: 投機的 demux (peek)
+
+- **OPFS write と並列に Worker で demux** を走らせて、`durationSec` / `rotation` /
+  `fps` / `isHdr` を transcode 開始前に取得。peek は典型 100〜500ms、大ファイルの OPFS
+  write のほうが遅いケースが多く、ほぼ無料で metadata が手に入る
+- **`messages.ts`** に Worker request `{ type: 'peek', id, file: File }` と Worker
+  response `{ type: 'peeked', id, meta: PeekMeta }` / `{ type: 'peekFailed', id, error }`
+  を追加。`PeekMeta = { durationSec, rotation, width, height, fps, isHdr }`
+- **`JobRunner.handlePeek()`** — demux → metadata 抽出 → `Input.dispose()`、currentJobId
+  / terminalSent に影響しないので transcode と並行で安全に走る
+- **`compressor-client.ts` の `peekFile()`** — Promise ベースのラッパ、id 不一致メッセージ
+  は無視、複数 peek を同じ worker で並行可能
+- **`queueStore.add()` で peek を OPFS write と並列発火** — `Promise.all([peekP, opfsP])`
+  形式、両方完了後に state へ `durationSec` 込みで反映。peek 失敗は silent drop
+  (transcode 時に同じエラーで failed になる)
+- **`_setWorkerImplsForTest(spawn, run, peek?)`** — peek を省略すると即座 peekFailed
+  を返すスタブで fallback (既存テストは無変更で通る)
+
+### Improved — D2: 推定出力サイズの即時表示
+
+- **`queued` / `starting` 中から「{入力} → 約 {予測}」を表示** — transcode 開始や ETA
+  算出 (10 秒経過後) を待たずに、peek (A2) で得た `durationSec` から
+  `(videoBitrate + audioBitrate) × durationSec / 8` の予測値を即座に出す。ユーザは
+  投入直後にプリセット選択の妥当性を判断できる
+- **`processing` 中 ETA まだなしのとき** も予測サイズで埋める (序盤の空白対策)。
+  ETA が出たら ETA 優先 (実測ベースで予測より正確)
+- **`src/lib/presets.ts`** に `estimatedOutputSize(durationSec, preset): number` を
+  追加。durationSec <= 0 / NaN / Infinity は NaN を返し、UI 側で表示判定
+- **`src/components/QueueItem.tsx`** に `tryEstimateOutputSize()` ヘルパ —
+  `findPreset()` + `estimatedOutputSize()` の合成、有限正数だけ返す guard 込み
+- **i18n 5 言語** に `queueItem.sub.queuedWithEstimate` + `queueItem.sub.processingWithEstimate`
+  を追加 (例: 日本語 `{size} → 約 {estimatedSize}`、英語 `{size} → ~{estimatedSize}`、
+  簡/繁/韓も同じ意味で)
+
+### Changed — TODOS.md スコープ整理
+
+- 4 件を「**スコープ除外 (2026-05-16 決定)**」セクションへ移動 — 永続的に対応しない方針:
+  - ❌ **カスタムプリセット** — 詳細圧縮設定が必要なユーザは HandBrake / FFmpeg / iMovie
+  - ❌ **ComparePreview 同期再生 + PiP** — Photos.app の PiP / QuickTime / VLC で十分
+  - ❌ **HEVC HDR 出力** — Final Cut Pro / DaVinci Resolve / Compressor / HandBrake
+    (Photos / AirDrop / iMessage では受信側 HDR 対応不確実、SDR 統一が正しい)
+  - ❌ **mid-stream resume** — 中断耐性が必要な長尺・高解像度は HandBrake / FFmpeg /
+    Compressor (デスクトップ領域、WebCodecs 内部状態シリアライズの仕様未定義)
+- 残る V2 候補は 3 件 (iPad 大画面レイアウト / 自動アップデート時の進行中ジョブ復旧 / V2.1
+  ドキュメント多言語化)
+
+### Internal
+
+- **テスト追加 32 件** (Vitest 562 → 594):
+  - `compressor-runner.test.ts` +5 — handlePeek (success / HDR / failure / transcode 独立 / String 化)
+  - `compressor-client.test.ts` +6 — peekFile (protocol / id match / parallel / 余分メッセージ / no-terminate) + 既存テストの terminate アサーション更新 (4 件)
+  - `presets.test.ts` +7 — estimatedOutputSize (計算式 / NaN guard / 長時間 / 全 preset)
+  - `QueueItem.test.tsx` +7 — D2 表示 (queued/starting/processing × durationSec 有無 × ETA 有無)
+  - `queueStore.test.ts` +7 — A1 pool reuse / parallelism 2 並列 / A2 peek 統合 (success / failure / multi-file)
+- **既存テストのリファクタ**:
+  - `mockEnv.spawnCount` → `mockEnv.jobs.length` (pool 化で spawn 数は prewarm + lazy peek
+    で増えるが「実行されたジョブ数」のセマンティクスは jobs.length が正確)
+  - `compressor-runner.test.ts` の `makeEnv` に `demux` スタブを追加 (RunnerEnv の必須化)
+
+---
+
 ## [1.2.0] - 2026-05-16 — V2: HEVC bench + バルク保存
 
 V1.1.0 出荷後の第 2 機能バッチ。VideoToolbox の単一 HW エンコーダ制約を実測検出する

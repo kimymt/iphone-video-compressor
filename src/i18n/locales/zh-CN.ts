@@ -47,8 +47,10 @@ export const zhCN: Messages = {
     retryDisabledTitle: '输入文件已删除,无法重试',
     sub: {
       queued: '{size} · {status}',
+      queuedWithEstimate: '{size} → 约 {estimatedSize}',
       processing: '{size} · {status}',
       processingEta: '{size} · 剩余 {duration}',
+      processingWithEstimate: '{size} → 约 {estimatedSize}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 已完成',
       failed: '此视频无法处理',

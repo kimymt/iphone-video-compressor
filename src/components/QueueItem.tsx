@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useQueueStore } from '../stores/queueStore';
 import { formatBytes, formatDuration } from '../lib/format';
+import { estimatedOutputSize, findPreset } from '../lib/presets';
 import { useT } from '../i18n';
 import type { QueueItem } from '../lib/types';
 import ShareButton from './ShareButton';
@@ -194,34 +195,74 @@ export default function QueueItemRow({ item }: QueueItemProps) {
 }
 
 /**
+ * V2.x (D2): 動画長 + preset から圧縮後の予測サイズ (バイト) を返す。
+ * `durationSec` 未設定 or preset 不在のときは null。表示判定に使う。
+ */
+function tryEstimateOutputSize(item: QueueItem): number | null {
+  if (typeof item.durationSec !== 'number' || item.durationSec <= 0) return null;
+  const preset = findPreset(item.preset);
+  if (!preset) return null;
+  const bytes = estimatedOutputSize(item.durationSec, preset);
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  return bytes;
+}
+
+/**
  * status に応じた副次テキストを返す。
- * - queued/starting/cancelled: 入力サイズ + ラベル
- * - processing: 入力サイズ + ETA (利用可能なら)
+ * - queued/starting: 入力サイズ + ラベル (durationSec 取得済みなら「→ 約 {予測}」)
+ * - processing: 入力サイズ + ETA / 予測サイズ (どちらも利用可能なら ETA 優先)
  * - done: 入力 → 出力 + 圧縮率
- * - failed: Phase 7 で「この動画は処理できません」+ 生のエラー (CLAUDE.md S10)
+ * - failed: 「この動画は処理できません」(CLAUDE.md S10)
+ * - cancelled: 入力サイズ + ラベル
+ *
+ * V2.x (D2): peek (A2) で得た `durationSec` を使って queued/starting/processing 中も
+ * 圧縮後サイズを予測表示する。ETA が未算出 (transcode 開始 10 秒以内) でも予測値が
+ * 出るので、ユーザは投入直後にプリセット選択の妥当性を判断できる。
  */
 function renderSubText(
   item: QueueItem,
   t: (path: string, vars?: Record<string, string | number>) => string,
   statusLabel: (status: QueueItem['status']) => string,
 ): string {
+  const estBytes = tryEstimateOutputSize(item);
+
   switch (item.status) {
     case 'queued':
+      if (estBytes !== null) {
+        return t('queueItem.sub.queuedWithEstimate', {
+          size: formatBytes(item.inputSize),
+          estimatedSize: formatBytes(estBytes),
+        });
+      }
       return t('queueItem.sub.queued', {
         size: formatBytes(item.inputSize),
         status: statusLabel('queued'),
       });
     case 'starting':
+      if (estBytes !== null) {
+        return t('queueItem.sub.queuedWithEstimate', {
+          size: formatBytes(item.inputSize),
+          estimatedSize: formatBytes(estBytes),
+        });
+      }
       return t('queueItem.sub.queued', {
         size: formatBytes(item.inputSize),
         status: statusLabel('starting'),
       });
     case 'processing': {
       const sizeLabel = formatBytes(item.inputSize);
+      // ETA があれば最優先 (実測ベースで予測より正確)
       if (item.etaSec !== undefined && item.etaSec !== null) {
         return t('queueItem.sub.processingEta', {
           size: sizeLabel,
           duration: formatDuration(item.etaSec),
+        });
+      }
+      // ETA まだなくても予測サイズが分かれば見せる (transcode 序盤の空白対策)
+      if (estBytes !== null) {
+        return t('queueItem.sub.processingWithEstimate', {
+          size: sizeLabel,
+          estimatedSize: formatBytes(estBytes),
         });
       }
       return t('queueItem.sub.processing', {

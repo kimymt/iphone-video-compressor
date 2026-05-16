@@ -48,8 +48,13 @@ export const ja = {
     retryDisabledTitle: '入力ファイルが削除されているため再試行できません',
     sub: {
       queued: '{size} · {status}',
+      /** V2.x (D2): peek (A2) で durationSec 取得済みの queued/starting で使用。 */
+      queuedWithEstimate: '{size} → 約 {estimatedSize}',
       processing: '{size} · {status}',
       processingEta: '{size} · 残り {duration}',
+      /** V2.x (D2): processing 中で ETA がまだ算出されていないが peek で予測サイズが
+       *  分かっているとき。ETA が出るまでの空白期間にも予測値を見せる。 */
+      processingWithEstimate: '{size} → 約 {estimatedSize}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 完了',
       failed: 'この動画は処理できませんでした',

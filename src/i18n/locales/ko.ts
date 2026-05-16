@@ -46,8 +46,10 @@ export const ko: Messages = {
     retryDisabledTitle: '입력 파일이 삭제되어 재시도할 수 없습니다',
     sub: {
       queued: '{size} · {status}',
+      queuedWithEstimate: '{size} → 약 {estimatedSize}',
       processing: '{size} · {status}',
       processingEta: '{size} · 남은 시간 {duration}',
+      processingWithEstimate: '{size} → 약 {estimatedSize}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 완료',
       failed: '이 동영상은 처리할 수 없습니다',

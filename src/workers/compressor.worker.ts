@@ -5,6 +5,7 @@
 
 import { JobRunner } from './compressor-runner';
 import { transcode } from '../pipeline/transcode';
+import { demuxInput } from '../pipeline/demux';
 import { readFromOpfs, getOpfsWritable } from '../db/opfs';
 import type { WorkerRequest, WorkerResponse } from './messages';
 
@@ -15,6 +16,8 @@ const runner = new JobRunner({
   readInput: readFromOpfs,
   openOutput: getOpfsWritable,
   runTranscode: transcode,
+  // V2.x (A2): peek 用 demux ハンドラ
+  demux: demuxInput,
 });
 
 self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
