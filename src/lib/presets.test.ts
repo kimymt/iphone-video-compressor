@@ -8,6 +8,7 @@ import {
   defaultPresetKey,
   findPreset,
   MAX_INFLIGHT_FRAMES,
+  estimatedOutputSize,
 } from './presets';
 import type { EnvCheck, Preset } from './types';
 
@@ -206,6 +207,55 @@ describe('MAX_INFLIGHT_FRAMES', () => {
     const codecs = PRESETS.map((p) => p.codec);
     for (const c of codecs) {
       expect(MAX_INFLIGHT_FRAMES[c]).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ----- V2.x (D2): estimatedOutputSize -----
+
+describe('estimatedOutputSize (V2.x D2)', () => {
+  const standardHevc = PRESETS.find((p) => p.key === 'standard-hevc')!;
+  const minH264 = PRESETS.find((p) => p.key === 'min-h264')!;
+
+  it('動画長 + preset から bps × sec / 8 でバイト数を計算', () => {
+    // standard-hevc: video 3 Mbps + audio 128 kbps = 3.128 Mbps
+    // 10 秒なら 3.128 * 10 / 8 = 3.91 MB ≈ 3,910,000 bytes
+    const bytes = estimatedOutputSize(10, standardHevc);
+    expect(bytes).toBeCloseTo((3_000_000 + 128_000) * 10 / 8, 0);
+  });
+
+  it('min-h264 で短時間動画 (1 秒) も正しく計算', () => {
+    // min-h264: video 800 kbps + audio 64 kbps = 864 kbps
+    // 1 秒 = 864,000 / 8 = 108,000 bytes
+    expect(estimatedOutputSize(1, minH264)).toBe((800_000 + 64_000) / 8);
+  });
+
+  it('durationSec=0 で NaN を返す (UI 側で「予測なし」表示)', () => {
+    expect(estimatedOutputSize(0, standardHevc)).toBeNaN();
+  });
+
+  it('durationSec が負数で NaN を返す', () => {
+    expect(estimatedOutputSize(-5, standardHevc)).toBeNaN();
+  });
+
+  it('durationSec が NaN / Infinity で NaN を返す (UI が誤表示しない)', () => {
+    expect(estimatedOutputSize(NaN, standardHevc)).toBeNaN();
+    expect(estimatedOutputSize(Infinity, standardHevc)).toBeNaN();
+    expect(estimatedOutputSize(-Infinity, standardHevc)).toBeNaN();
+  });
+
+  it('長時間動画 (1 時間) でも overflow せず合理的な値', () => {
+    // 1h × standard-hevc = 3.128 Mbps × 3600 sec / 8 = 1.408 GB
+    const oneHour = estimatedOutputSize(3600, standardHevc);
+    expect(oneHour).toBeCloseTo(1_407_600_000, -3);
+    expect(Number.isFinite(oneHour)).toBe(true);
+  });
+
+  it('全プリセットで durationSec=10 のときに正の有限値を返す', () => {
+    for (const p of PRESETS) {
+      const bytes = estimatedOutputSize(10, p);
+      expect(Number.isFinite(bytes)).toBe(true);
+      expect(bytes).toBeGreaterThan(0);
     }
   });
 });

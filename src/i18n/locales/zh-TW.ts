@@ -47,8 +47,10 @@ export const zhTW: Messages = {
     retryDisabledTitle: '輸入檔案已刪除,無法重試',
     sub: {
       queued: '{size} · {status}',
+      queuedWithEstimate: '{size} → 約 {estimatedSize}',
       processing: '{size} · {status}',
       processingEta: '{size} · 剩餘 {duration}',
+      processingWithEstimate: '{size} → 約 {estimatedSize}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · 已完成',
       failed: '此影片無法處理',

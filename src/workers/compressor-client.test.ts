@@ -3,8 +3,8 @@
 // runTranscodeJob の Promise 解決パターンを検証する。
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { runTranscodeJob } from './compressor-client';
-import type { WorkerRequest, WorkerResponse } from './messages';
+import { runTranscodeJob, peekFile } from './compressor-client';
+import type { PeekMeta, WorkerRequest, WorkerResponse } from './messages';
 import type { Preset } from '../lib/types';
 
 // ----- MockWorker -----
@@ -97,28 +97,29 @@ describe('runTranscodeJob — happy path', () => {
     await p;
   });
 
-  it('done で Promise が { kind:done } で resolve、worker.terminate 呼ばれる', async () => {
+  it('done で Promise が { kind:done } で resolve、worker は terminate されない (V2.x A1 pool で再利用)', async () => {
     const p = runTranscodeJob(worker, makeOpts());
     worker.emit({ type: 'done', id: 'job-1', outputSize: 12345, durationSec: 7.5 });
     const result = await p;
     expect(result).toEqual({ kind: 'done', outputSize: 12345, durationSec: 7.5 });
-    expect(worker.terminate).toHaveBeenCalledOnce();
+    // V2.x (A1): runTranscodeJob は worker を terminate しない (pool で再利用)
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 
-  it('failed で Promise が { kind:failed, error } で resolve', async () => {
+  it('failed で Promise が { kind:failed, error } で resolve (terminate されない)', async () => {
     const p = runTranscodeJob(worker, makeOpts());
     worker.emit({ type: 'failed', id: 'job-1', error: 'oops' });
     const result = await p;
     expect(result).toEqual({ kind: 'failed', error: 'oops' });
-    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 
-  it('cancelled で Promise が { kind:cancelled } で resolve', async () => {
+  it('cancelled で Promise が { kind:cancelled } で resolve (terminate されない)', async () => {
     const p = runTranscodeJob(worker, makeOpts());
     worker.emit({ type: 'cancelled', id: 'job-1' });
     const result = await p;
     expect(result).toEqual({ kind: 'cancelled' });
-    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 });
 
@@ -159,7 +160,7 @@ describe('runTranscodeJob — id matching', () => {
 // ----- cancel/done レース (メイン側) -----
 
 describe('runTranscodeJob — cancel/done race (main side)', () => {
-  it('terminal 後の追加メッセージは無視 (terminate も 1 回だけ)', async () => {
+  it('terminal 後の追加メッセージは無視 (V2.x A1: terminate しないが listener は解除済み)', async () => {
     const onProgress = vi.fn();
     const p = runTranscodeJob(worker, makeOpts({ onProgress }));
     worker.emit({ type: 'done', id: 'job-1', outputSize: 1, durationSec: 1 });
@@ -175,8 +176,9 @@ describe('runTranscodeJob — cancel/done race (main side)', () => {
       etaSec: 0,
     });
     worker.emit({ type: 'failed', id: 'job-1', error: 'stale' });
+    // listener が解除されているので onProgress は呼ばれない (terminate 不要)
     expect(onProgress).not.toHaveBeenCalled();
-    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 
   it('signal.abort() で cancel メッセージを post (transcode 後)', async () => {
@@ -258,12 +260,13 @@ describe('runTranscodeJob — cancel/done race (main side)', () => {
 // ----- worker error -----
 
 describe('runTranscodeJob — worker error', () => {
-  it('Worker の error イベントで failed として resolve', async () => {
+  it('Worker の error イベントで failed として resolve (terminate は queueStore 側で行う)', async () => {
     const p = runTranscodeJob(worker, makeOpts());
     worker.emitError('script load failed');
     const result = await p;
     expect(result).toEqual({ kind: 'failed', error: 'script load failed' });
-    expect(worker.terminate).toHaveBeenCalledOnce();
+    // V2.x (A1): error 時の terminate は queueStore.registerWorkerErrorHandler 側で実行する
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 
   it('Worker error 後の追加メッセージは無視', async () => {
@@ -280,5 +283,88 @@ describe('runTranscodeJob — worker error', () => {
       etaSec: null,
     });
     expect(onProgress).not.toHaveBeenCalled();
+  });
+});
+
+// ----- V2.x (A2): peekFile -----
+
+describe('peekFile — V2.x (A2) 投機的 demux', () => {
+  function makePeekMeta(overrides?: Partial<PeekMeta>): PeekMeta {
+    return {
+      durationSec: 12.5,
+      rotation: 0,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      isHdr: false,
+      ...overrides,
+    };
+  }
+
+  it('peek メッセージを postMessage で送り、peeked で resolve', async () => {
+    const file = new File([new Uint8Array(10)], 'in.mp4');
+    const p = peekFile(worker, 'peek-1', file);
+
+    // peek が postMessage で送られる
+    expect(worker.postMessage.mock.calls).toHaveLength(1);
+    expect(worker.postMessage.mock.calls[0]![0]).toMatchObject({
+      type: 'peek',
+      id: 'peek-1',
+    });
+
+    worker.emit({ type: 'peeked', id: 'peek-1', meta: makePeekMeta() });
+    const result = await p;
+    expect(result).toEqual({ kind: 'peeked', meta: makePeekMeta() });
+  });
+
+  it('peekFailed で error として resolve', async () => {
+    const p = peekFile(worker, 'peek-2', new File([], 'bad.txt'));
+    worker.emit({ type: 'peekFailed', id: 'peek-2', error: 'not a video' });
+    const result = await p;
+    expect(result).toEqual({ kind: 'peekFailed', error: 'not a video' });
+  });
+
+  it('違う id のメッセージは無視', async () => {
+    const p = peekFile(worker, 'peek-3', new File([], 'x.mp4'));
+    // 別ジョブの terminal / progress は無視される
+    worker.emit({ type: 'done', id: 'other', outputSize: 1, durationSec: 1 });
+    worker.emit({ type: 'peeked', id: 'other', meta: makePeekMeta({ durationSec: 99 }) });
+
+    // 自分の id の peeked が来てから resolve
+    worker.emit({ type: 'peeked', id: 'peek-3', meta: makePeekMeta() });
+    const result = await p;
+    expect(result.kind).toBe('peeked');
+    if (result.kind !== 'peeked') throw new Error('expected peeked');
+    expect(result.meta.durationSec).toBe(12.5);
+  });
+
+  it('複数 peek が同じ worker で並行可能 (id で多重 resolve しない)', async () => {
+    const p1 = peekFile(worker, 'p1', new File([], 'a.mp4'));
+    const p2 = peekFile(worker, 'p2', new File([], 'b.mp4'));
+
+    worker.emit({ type: 'peeked', id: 'p2', meta: makePeekMeta({ durationSec: 20 }) });
+    worker.emit({ type: 'peeked', id: 'p1', meta: makePeekMeta({ durationSec: 10 }) });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toMatchObject({ kind: 'peeked', meta: { durationSec: 10 } });
+    expect(r2).toMatchObject({ kind: 'peeked', meta: { durationSec: 20 } });
+  });
+
+  it('peek 完了後の余計なメッセージで再 resolve しない', async () => {
+    const p = peekFile(worker, 'peek-4', new File([], 'x.mp4'));
+    worker.emit({ type: 'peeked', id: 'peek-4', meta: makePeekMeta() });
+    const r = await p;
+    expect(r.kind).toBe('peeked');
+
+    // listener 解除済みなので二重 emit しても問題ない
+    worker.emit({ type: 'peekFailed', id: 'peek-4', error: 'late' });
+    // ここまで例外が出なければ OK (resolve はすでに 1 回のみ)
+  });
+
+  it('worker.terminate は呼ばれない (pool で再利用するため)', async () => {
+    const p = peekFile(worker, 'peek-5', new File([], 'x.mp4'));
+    worker.emit({ type: 'peeked', id: 'peek-5', meta: makePeekMeta() });
+    await p;
+    expect(worker.terminate).not.toHaveBeenCalled();
   });
 });

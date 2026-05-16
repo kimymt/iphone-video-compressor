@@ -29,6 +29,7 @@ import { withViewTransition } from '../lib/viewTransition';
 import {
   spawnTranscodeWorker as defaultSpawnTranscodeWorker,
   runTranscodeJob as defaultRunTranscodeJob,
+  peekFile as defaultPeekFile,
   type TranscodeJobResult,
 } from '../workers/compressor-client';
 
@@ -36,20 +37,132 @@ import {
 
 type SpawnFn = () => Worker;
 type RunFn = typeof defaultRunTranscodeJob;
+type PeekFn = typeof defaultPeekFile;
 
 let spawnWorkerImpl: SpawnFn = defaultSpawnTranscodeWorker;
 let runJobImpl: RunFn = defaultRunTranscodeJob;
+let peekFileImpl: PeekFn = defaultPeekFile;
 
-/** テスト用: Worker spawner と runner を差し替える。 */
-export function _setWorkerImplsForTest(spawn: SpawnFn, run: RunFn): void {
+/**
+ * テスト用: Worker spawner と runner (任意で peek 関数) を差し替える。
+ *
+ * V2.x (A2): peek を省略した呼び出しでは、即座に `peekFailed` を返すスタブを使う
+ * (silent drop の挙動と一致)。queueStore.add の `await peekPromise` がハングしない
+ * よう、jsdom の Worker mock が postMessage を no-op にしているケースでも安全に進む。
+ */
+export function _setWorkerImplsForTest(spawn: SpawnFn, run: RunFn, peek?: PeekFn): void {
   spawnWorkerImpl = spawn;
   runJobImpl = run;
+  peekFileImpl = peek ?? (async () => ({ kind: 'peekFailed', error: 'test stub' }));
 }
 
 /** テスト用: 実装をデフォルトに戻す。 */
 export function _resetWorkerImplsForTest(): void {
   spawnWorkerImpl = defaultSpawnTranscodeWorker;
   runJobImpl = defaultRunTranscodeJob;
+  peekFileImpl = defaultPeekFile;
+}
+
+// ---- V2.x (A1): persistent Worker pool ----
+//
+// transcode 用と peek 用で別ステートを持つ:
+//
+// - transcodePool / inUseTranscode: parallelism (1 or 2) ぶんの worker を pre-spawn し、
+//   runJob が acquire → run → release で再利用。terminate しないので cold-start
+//   (mediabunny パース + Worker spawn = 500ms〜2s, CLAUDE.md ハマりどころ #18) を
+//   2 回目以降の transcode で完全に消す。
+//
+// - peekWorker: 単一の共有 worker。複数 peek を同時受け付けることもできる
+//   (handlePeek は currentJobId / terminalSent を触らないので並行安全)。
+//   transcode 中の worker を peek が圧迫しないよう、pool とは別に分離。
+//
+// Worker error 時は pool から自動 drop して、次の acquire で再 spawn する。
+// テスト時は `_resetWorkerPoolForTest()` で全 worker を terminate する。
+
+const transcodePool: Worker[] = [];
+const inUseTranscode = new Set<Worker>();
+let peekWorker: Worker | null = null;
+
+/**
+ * transcode pool から idle な worker を 1 個取得。空きがなければ新規 spawn。
+ * 戻り値の worker は必ず `releaseWorker(worker)` で返却すること。
+ */
+function acquireTranscodeWorker(): Worker {
+  const idle = transcodePool.find((w) => !inUseTranscode.has(w));
+  if (idle) {
+    inUseTranscode.add(idle);
+    return idle;
+  }
+  const w = spawnWorkerImpl();
+  registerWorkerErrorHandler(w);
+  transcodePool.push(w);
+  inUseTranscode.add(w);
+  return w;
+}
+
+/** transcode worker を pool に返却。次の acquireWorker で再利用される。 */
+function releaseTranscodeWorker(w: Worker): void {
+  inUseTranscode.delete(w);
+}
+
+/** Worker error 発火時に pool から drop。次の acquire で fresh worker が spawn される。 */
+function registerWorkerErrorHandler(w: Worker): void {
+  w.addEventListener('error', () => {
+    inUseTranscode.delete(w);
+    const idx = transcodePool.indexOf(w);
+    if (idx !== -1) transcodePool.splice(idx, 1);
+    if (peekWorker === w) peekWorker = null;
+    try {
+      w.terminate();
+    } catch {
+      /* terminate 失敗は無視 */
+    }
+  });
+}
+
+/**
+ * peek 用 worker を取得 (lazy spawn、単一インスタンス共有)。
+ * handlePeek は worker 内部状態を触らないので、複数 peek を並行で受けても安全。
+ */
+function getPeekWorker(): Worker {
+  if (!peekWorker) {
+    peekWorker = spawnWorkerImpl();
+    registerWorkerErrorHandler(peekWorker);
+  }
+  return peekWorker;
+}
+
+/**
+ * 起動時に transcode worker を `count` 個 pre-spawn する。
+ * `init()` で parallelism ぶん呼ぶことで、最初のファイル投入時に Worker cold-start を払わずに済む。
+ */
+function prewarmTranscodePool(count: number): void {
+  while (transcodePool.length < count) {
+    const w = spawnWorkerImpl();
+    registerWorkerErrorHandler(w);
+    transcodePool.push(w);
+  }
+}
+
+/** テスト用: pool 全 worker を terminate して空にする。 */
+export function _resetWorkerPoolForTest(): void {
+  for (const w of transcodePool) {
+    try {
+      w.terminate();
+    } catch {
+      /* terminate 失敗は無視 */
+    }
+  }
+  transcodePool.length = 0;
+  inUseTranscode.clear();
+  if (peekWorker) {
+    try {
+      peekWorker.terminate();
+    } catch {
+      /* terminate 失敗は無視 */
+    }
+    peekWorker = null;
+  }
 }
 
 // ---- 進行中ジョブの管理 (zustand state には乗せない、in-memory のみ) ----
@@ -193,12 +306,21 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     const raw = await loadAllQueueItems();
     const items = await resetInProgressItems(raw);
     const hevcBenchSlowdown = (await getSetting<boolean | null>('hevcBenchSlowdown')) ?? null;
+    const parallelism = computeParallelism();
     set({
       items,
-      parallelism: computeParallelism(),
+      parallelism,
       hevcBenchSlowdown,
       initialized: true,
     });
+    // V2.x (A1): transcode worker を parallelism ぶん pre-spawn する。
+    // 初回 add() の cold-start (500ms〜2s) を払わずに済む。
+    // 失敗 (Worker spawn 例外) は致命的でない (acquireWorker で lazy spawn にフォールバック)。
+    try {
+      prewarmTranscodePool(parallelism);
+    } catch {
+      /* prewarm 失敗は無視。後続の acquire で lazy spawn される。 */
+    }
     // 復元後に queued が残っていれば自動再開
     get().processNext();
   },
@@ -219,21 +341,37 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     // まとめて state に反映する。これにより N 件選択時に全アイテムが並列に
     // slide-in する (旧実装は各 add で startViewTransition が連鎖し、前の
     // transition が skip されて最後の 1 件だけアニメする問題があった)。
+    //
+    // V2.x (A2): 各 file に対して peek (投機的 demux) を OPFS write と並列に発火する。
+    // peek 結果は durationSec を取得して初期 item に反映 → D2 で「予測 ~38MB」を表示。
+    // peek 失敗は silent drop (transcode 時に同じエラーで failed になる)。
     const addedIds: string[] = [];
     const newItems: QueueItem[] = [];
     const now = Date.now();
     for (const file of files) {
       const id = crypto.randomUUID();
+      // V2.x (A2): peek を OPFS write と並列で開始 (peek worker は共有 singleton)。
+      // try/catch 不要: peekFile は内部で peekFailed に変換して resolve する。
+      const peekPromise = peekFileImpl(getPeekWorker(), id, file);
+
       let inputOpfsPath: string;
       try {
         inputOpfsPath = await writeInputToOpfs(file, id);
       } catch (err) {
+        // peek が裏で走り続けるのは無害 (worker は persistent、結果は捨てられる)
         return {
           ok: false,
           reason: 'opfs-write-failed',
           error: err instanceof Error ? err.message : String(err),
         };
       }
+
+      // OPFS write 完了後に peek 結果を await。peek は典型 100〜500ms なので
+      // 大ファイルの OPFS write のほうが遅く、peek は既に終わっているケースが多い。
+      const peekResult = await peekPromise;
+      const durationSec =
+        peekResult.kind === 'peeked' ? peekResult.meta.durationSec : undefined;
+
       const item: QueueItem = {
         id,
         fileName: file.name,
@@ -243,6 +381,9 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
         preset,
         addedAt: now + addedIds.length,
         status: 'queued',
+        // V2.x (A2 + D2): peek 成功時に durationSec を初期セット → QueueItem が
+        // 「予測 ~38MB」を queued/starting 中から表示できる (transcode 開始を待たない)。
+        durationSec,
       };
       await saveQueueItem(item);
       addedIds.push(id);
@@ -520,7 +661,10 @@ async function runJob(
   // テスト間の leftover runJob が次の mockEnv で spawn を発火する race を防ぐ意味もある。
   if (!get().items.find((i) => i.id === item.id)) return;
 
-  const worker = spawnWorkerImpl();
+  // V2.x (A1): persistent pool から worker を 1 つ acquire。
+  // pool が空なら lazy spawn、parallelism 上限を超えた場合は新規 spawn (processNext 側で
+  // 並列度を制御しているので通常発生しない)。
+  const worker = acquireTranscodeWorker();
   const abortController = new AbortController();
   runningAbortControllers.set(item.id, abortController);
 
@@ -590,6 +734,8 @@ async function runJob(
     );
   } finally {
     runningAbortControllers.delete(item.id);
+    // V2.x (A1): worker を pool に返却。次の transcode で再利用される (terminate しない)。
+    releaseTranscodeWorker(worker);
     // 次のジョブを起動 (parallel slot が空いたかもしれない)
     get().processNext();
   }
@@ -648,10 +794,12 @@ async function markFailed(
 // findPreset を re-export しないが、Preset の型のために import を維持
 export type { Preset };
 
-/** テスト用: ストア状態を初期値に戻す。runningAbortControllers もクリア。 */
+/** テスト用: ストア状態を初期値に戻す。runningAbortControllers もクリア。
+ * V2.x (A1): worker pool もクリアして worker leak を防ぐ。 */
 export function _resetQueueStoreForTest(): void {
   for (const [, ac] of runningAbortControllers) ac.abort();
   runningAbortControllers.clear();
+  _resetWorkerPoolForTest();
   useQueueStore.setState({
     items: [],
     parallelism: 1,

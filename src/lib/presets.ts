@@ -163,3 +163,24 @@ export const MAX_INFLIGHT_FRAMES: Record<CodecChoice, number> = {
 
 // CodecChoice の型再 export (capability check が presets.ts 経由で参照しても良いように)
 export type { CodecChoice };
+
+/**
+ * V2.x (D2): 動画長 (秒) と preset から圧縮後の予測出力サイズ (バイト) を返す。
+ *
+ * 計算式: `(videoBitrate + audioBitrate) * durationSec / 8`
+ *   - bitrate は bps、durationSec で総 bits、/8 でバイトに換算
+ *   - mp4 コンテナのオーバーヘッド (1〜2%) は無視 (体感誤差レベル)
+ *   - VBR で平均より上下するが、SettingsSheet 上の予測値として十分
+ *
+ * 用途: QueueItem の queued/starting/processing 中に「{入力} → 約 {予測}」を出して
+ * ユーザに圧縮後サイズの目安を即時提示する。peek (A2) で得た durationSec を入力にする。
+ *
+ * 引数の制約:
+ *   - durationSec <= 0 または非数なら NaN を返す (呼び出し側で 表示判定)
+ *   - bitrate は preset 定義の値をそのまま使う
+ */
+export function estimatedOutputSize(durationSec: number, preset: Preset): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return NaN;
+  const totalBitsPerSec = preset.videoBitrate + preset.audioBitrate;
+  return (totalBitsPerSec * durationSec) / 8;
+}

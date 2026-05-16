@@ -6,16 +6,21 @@
 //   TranscodeCancelledError を投げ catch ブロックで 'cancelled' を post
 // - terminalSent フラグで cancel/done レースを 1 メッセージに収束させる
 //   (CLAUDE.md ハマりどころ 19)
+// - V2.x (A2): `handle({ type: 'peek', ... })` で投機的 demux を実行し、metadata を
+//   `peeked` で応答。transcode の lifecycle (currentJobId / terminalSent) には影響しない。
 //
-// 想定使用: Worker entry (compressor.worker.ts) で 1 ジョブ実行後、Worker は
-// メインスレッドから terminate() される (terminal 受信後)。
+// V2.x (A1): Worker は persistent。1 つの JobRunner で複数 transcode を順次処理する。
+// handleTranscode 開始時に currentJobId / terminalSent をリセットすることで実現。
 
 import {
   TranscodeCancelledError,
   type TranscodeOptions,
   type TranscodeResult,
 } from '../pipeline/transcode';
-import type { WorkerRequest, WorkerResponse } from './messages';
+import type { DemuxResult } from '../pipeline/demux';
+import { isHdrColorSpace } from '../pipeline/demux';
+import type { Rotation } from 'mediabunny';
+import type { PeekMeta, WorkerRequest, WorkerResponse } from './messages';
 
 /** JobRunner の依存。テストで差し替え可能。 */
 export type RunnerEnv = {
@@ -31,7 +36,22 @@ export type RunnerEnv = {
     output: FileSystemWritableFileStream,
     opts: TranscodeOptions,
   ): Promise<TranscodeResult>;
+  /**
+   * V2.x (A2): demux 実装。peek で metadata 抽出に使う。
+   * デフォルトは src/pipeline/demux.ts の demuxInput。
+   * 戻り値の `Input` は呼び出し側 (handlePeek) が dispose() する責任を持つ。
+   */
+  demux(file: Blob): Promise<DemuxResult>;
 };
+
+/**
+ * mediabunny の Rotation 型 (0/90/180/270) を message protocol 用の固定 union に
+ * 絞り込む。実値は同じだが、PeekMeta の型と互換にするためのヘルパ。
+ */
+function normalizeRotation(r: Rotation): 0 | 90 | 180 | 270 {
+  if (r === 90 || r === 180 || r === 270) return r;
+  return 0;
+}
 
 export class JobRunner {
   private abortController: AbortController | null = null;
@@ -49,6 +69,44 @@ export class JobRunner {
       await this.handleTranscode(msg);
     } else if (msg.type === 'cancel') {
       this.handleCancel(msg);
+    } else if (msg.type === 'peek') {
+      // V2.x (A2): peek は transcode の lifecycle と独立。並行で走る可能性がある
+      // (ユーザが picker で複数件選んだとき、各 file に対して peek が連続発火する)。
+      await this.handlePeek(msg);
+    }
+  }
+
+  /**
+   * V2.x (A2): 投機的 demux。OPFS write と並列に main で発火させる想定。
+   * demux → metadata 抽出 → dispose() の最小コストで返す。
+   * 失敗は致命的でないので `peekFailed` で silent に応答 (transcode 時に再失敗する)。
+   * currentJobId / terminalSent / abortController は触らない (transcode と独立)。
+   */
+  private async handlePeek(msg: WorkerRequest & { type: 'peek' }): Promise<void> {
+    let demuxed: DemuxResult | null = null;
+    try {
+      demuxed = await this.env.demux(msg.file);
+      const meta: PeekMeta = {
+        durationSec: demuxed.durationSec,
+        rotation: normalizeRotation(demuxed.rotation),
+        width: demuxed.width,
+        height: demuxed.height,
+        fps: demuxed.fps,
+        isHdr: isHdrColorSpace(demuxed.colorSpace),
+      };
+      this.env.post({ type: 'peeked', id: msg.id, meta });
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      this.env.post({ type: 'peekFailed', id: msg.id, error: errMsg });
+    } finally {
+      // Input は demuxed が成功していれば dispose() する責任がある (demux.ts のコメント参照)
+      if (demuxed) {
+        try {
+          demuxed.input.dispose();
+        } catch {
+          /* dispose 中の二次例外は無視 */
+        }
+      }
     }
   }
 

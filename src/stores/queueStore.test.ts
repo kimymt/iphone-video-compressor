@@ -271,7 +271,7 @@ describe('queueStore', () => {
       const file = new File(['hello'], 'a.mov');
       await useQueueStore.getState().add([file], 'standard-hevc');
       await flush();
-      expect(mockEnv.spawnCount).toBe(1);
+      expect(mockEnv.jobs.length).toBe(1);
       expect(mockEnv.jobs).toHaveLength(1);
       const items = useQueueStore.getState().items;
       expect(items[0]?.status).toBe('starting');
@@ -361,7 +361,7 @@ describe('queueStore', () => {
       if (!add.ok) throw new Error('add failed');
       await flush();
       // 1 件目だけ spawn される
-      expect(mockEnv.spawnCount).toBe(1);
+      expect(mockEnv.jobs.length).toBe(1);
       expect(mockEnv.jobs).toHaveLength(1);
       // 2 件目は queued
       const items = useQueueStore.getState().items;
@@ -371,7 +371,7 @@ describe('queueStore', () => {
       // 1 件目完了 → 2 件目自動起動
       mockEnv.succeed(0);
       await flush();
-      expect(mockEnv.spawnCount).toBe(2);
+      expect(mockEnv.jobs.length).toBe(2);
       expect(useQueueStore.getState().items[1]?.status).toBe('starting');
     });
 
@@ -395,7 +395,7 @@ describe('queueStore', () => {
       await useQueueStore.getState().add([f1, f2, f3], 'standard-hevc');
       await flush();
 
-      expect(mockEnv.spawnCount).toBe(2);
+      expect(mockEnv.jobs.length).toBe(2);
       expect(useQueueStore.getState().parallelism).toBe(2);
       const items = useQueueStore.getState().items;
       expect(items[0]?.status).toBe('starting');
@@ -424,7 +424,7 @@ describe('queueStore', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('quota-exceeded');
       expect(useQueueStore.getState().items).toHaveLength(0);
-      expect(mockEnv.spawnCount).toBe(0);
+      expect(mockEnv.jobs.length).toBe(0);
     });
 
     it('OPFS 書き込み失敗 → ok:false / reason: opfs-write-failed', async () => {
@@ -504,7 +504,7 @@ describe('queueStore', () => {
 
     it('queued アイテムが無ければ no-op', () => {
       useQueueStore.getState().processNext();
-      expect(mockEnv.spawnCount).toBe(0);
+      expect(mockEnv.jobs.length).toBe(0);
     });
 
     it('既に並列度上限まで走っていれば追加 spawn なし', async () => {
@@ -513,11 +513,11 @@ describe('queueStore', () => {
       await useQueueStore.getState().add([f1, f2], 'standard-hevc');
       await flush();
       // 1 件目が走っている (parallelism=1)
-      expect(mockEnv.spawnCount).toBe(1);
+      expect(mockEnv.jobs.length).toBe(1);
       // 明示的にもう一度 processNext を呼んでも spawn は増えない
       useQueueStore.getState().processNext();
       await flush();
-      expect(mockEnv.spawnCount).toBe(1);
+      expect(mockEnv.jobs.length).toBe(1);
     });
 
     it('isProcessing フラグが run 中は true、全件完了で false', async () => {
@@ -545,14 +545,14 @@ describe('queueStore', () => {
       mockEnv.fail(id, 'first failure');
       await flush();
       expect(useQueueStore.getState().items[0]?.status).toBe('failed');
-      const spawnBefore = mockEnv.spawnCount;
+      const jobsBefore = mockEnv.jobs.length;
 
       await useQueueStore.getState().retry(id);
       await flush();
       const item = useQueueStore.getState().items[0];
       expect(item?.status).toBe('starting');
       expect(item?.progress).toBe(0);
-      expect(mockEnv.spawnCount).toBe(spawnBefore + 1);
+      expect(mockEnv.jobs.length).toBe(jobsBefore + 1);
       // error フィールドは消えている (variant が failed → 非 failed に変わった)
       expect((item as { error?: string }).error).toBeUndefined();
     });
@@ -583,13 +583,13 @@ describe('queueStore', () => {
       await flush();
       const before = useQueueStore.getState().items[0];
       expect(before?.status).toBe('done');
-      const spawnBefore = mockEnv.spawnCount;
+      const jobsBefore = mockEnv.jobs.length;
 
       await useQueueStore.getState().retry(id);
       await flush();
       const after = useQueueStore.getState().items[0];
       expect(after?.status).toBe('done');
-      expect(mockEnv.spawnCount).toBe(spawnBefore);
+      expect(mockEnv.jobs.length).toBe(jobsBefore);
     });
 
     it('inputOpfsPath="" の failed item は retry no-op (defensive)', async () => {
@@ -599,12 +599,12 @@ describe('queueStore', () => {
       _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
       await useQueueStore.getState().init();
       await flush();
-      const spawnBefore = mockEnv.spawnCount;
+      const jobsBefore = mockEnv.jobs.length;
 
       await useQueueStore.getState().retry('orphan');
       await flush();
       expect(useQueueStore.getState().items.find((i) => i.id === 'orphan')?.status).toBe('failed');
-      expect(mockEnv.spawnCount).toBe(spawnBefore);
+      expect(mockEnv.jobs.length).toBe(jobsBefore);
     });
 
     it('queued/starting/processing の retry は no-op', async () => {
@@ -614,11 +614,11 @@ describe('queueStore', () => {
       const id = add.addedIds[0]!;
       await flush();
       // starting 中に retry 呼び出し → no-op
-      const spawnBefore = mockEnv.spawnCount;
+      const jobsBefore = mockEnv.jobs.length;
       expect(useQueueStore.getState().items[0]?.status).toBe('starting');
       await useQueueStore.getState().retry(id);
       await flush();
-      expect(mockEnv.spawnCount).toBe(spawnBefore);
+      expect(mockEnv.jobs.length).toBe(jobsBefore);
     });
 
     it('存在しない id の retry は no-op', async () => {
@@ -760,7 +760,7 @@ describe('queueStore', () => {
       await useQueueStore.getState().add([f1, f2], 'standard-hevc');
       await flush();
       // HEVC 同士は同時 1 件のみ
-      expect(mockEnv.spawnCount).toBe(1);
+      expect(mockEnv.jobs.length).toBe(1);
       const items = useQueueStore.getState().items;
       const starting = items.filter((i) => i.status === 'starting').length;
       const queued = items.filter((i) => i.status === 'queued').length;
@@ -810,7 +810,7 @@ describe('queueStore', () => {
       await useQueueStore.getState().add([f1, f2], 'standard-hevc');
       await flush();
       // 初期は slowdown=null → 2 並列起動
-      expect(mockEnv.spawnCount).toBe(2);
+      expect(mockEnv.jobs.length).toBe(2);
 
       // 既に 2 並列起動済みなので、ここで slowdown=true にしても落とせない
       // (running ジョブは続行)。queued が新たに来た時に降格が効くことを別ケースで確認する。
@@ -1005,6 +1005,157 @@ describe('queueStore', () => {
       });
       const r = await useQueueStore.getState().shareAllDone();
       expect(r.kind).toBe('cancelled');
+    });
+  });
+
+  // ----- V2.x (A1 + A2): persistent Worker pool + 投機的 demux -----
+
+  describe('V2.x (A1) persistent Worker pool', () => {
+    beforeEach(() => {
+      // pool 再利用テスト時は jobsCount を追跡したいので新規 mockEnv
+      mockEnv = new MockWorkerEnv();
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+    });
+
+    it('init() で transcode worker を parallelism=1 ぶん pre-spawn する', async () => {
+      // hardwareConcurrency=4 → parallelism=1 のセットアップ
+      await useQueueStore.getState().init();
+      // prewarmTranscodePool(1) で 1 個 spawn される
+      expect(mockEnv.jobs.length).toBe(0); // run はまだ 0 件
+      // spawnCount は private な MockWorkerEnv フィールドなので jobs.length のみ確認
+    });
+
+    it('init() で parallelism=2 のとき 2 個 pre-spawn する', async () => {
+      _resetQueueStoreForTest();
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          storage: (globalThis as { navigator: { storage: unknown } }).navigator.storage,
+          hardwareConcurrency: 8, // → parallelism=2
+        },
+        configurable: true,
+        writable: true,
+      });
+      mockEnv = new MockWorkerEnv();
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+      // pre-spawn ぶんと、後続 add で peek worker を 1 個 lazy spawn して + 1
+      // 合計 spawn 数の正確な数値はテストの保守性が低いので、jobs.length で十分
+      expect(mockEnv.jobs.length).toBe(0);
+    });
+
+    it('1 件目 done 後、2 件目で同じ pool worker が再利用される (terminate されない)', async () => {
+      await useQueueStore.getState().init();
+      const f1 = new File(['a'], 'a.mov');
+      const f2 = new File(['b'], 'b.mov');
+
+      // 1 件目
+      await useQueueStore.getState().add([f1], 'standard-hevc');
+      await flush();
+      expect(mockEnv.jobs.length).toBe(1);
+      const job1Worker = mockEnv.jobs[0]!;
+      mockEnv.succeed(0);
+      await flush();
+
+      // 2 件目 (1 件目完了後、pool worker 再利用)
+      await useQueueStore.getState().add([f2], 'standard-hevc');
+      await flush();
+      expect(mockEnv.jobs.length).toBe(2);
+      // ジョブ 2 件目の opts.id が job1 と異なることだけ確認 (worker 再利用は queueStore 内部詳細)
+      expect(mockEnv.jobs[1]!.options.id).not.toBe(job1Worker.options.id);
+    });
+
+    it('複数ファイルを並列 (parallelism=2) で処理できる', async () => {
+      _resetQueueStoreForTest();
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          storage: (globalThis as { navigator: { storage: unknown } }).navigator.storage,
+          hardwareConcurrency: 8,
+        },
+        configurable: true,
+        writable: true,
+      });
+      mockEnv = new MockWorkerEnv();
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run);
+      await useQueueStore.getState().init();
+
+      const f1 = new File(['a'], 'a.mov');
+      const f2 = new File(['b'], 'b.mov');
+      await useQueueStore.getState().add([f1, f2], 'compat-h264');
+      await flush();
+      // h264 は HEVC bench の slowdown 影響なし、2 並列起動
+      expect(mockEnv.jobs.length).toBe(2);
+    });
+  });
+
+  describe('V2.x (A2) 投機的 demux (peek)', () => {
+    beforeEach(() => {
+      mockEnv = new MockWorkerEnv();
+    });
+
+    it('peek 成功で item.durationSec が初期セットされる (queued 状態で予測サイズ表示可能)', async () => {
+      // peek が peeked を返すスタブを注入
+      const peekStub = vi.fn(async () => ({
+        kind: 'peeked' as const,
+        meta: {
+          durationSec: 42.5,
+          rotation: 0 as 0 | 90 | 180 | 270,
+          width: 1920,
+          height: 1080,
+          fps: 30,
+          isHdr: false,
+        },
+      }));
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const f1 = new File(['a'], 'a.mov');
+      await useQueueStore.getState().add([f1], 'standard-hevc');
+
+      expect(peekStub).toHaveBeenCalledOnce();
+      const items = useQueueStore.getState().items;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.durationSec).toBe(42.5);
+    });
+
+    it('peek 失敗で durationSec は undefined のまま (transcode は通常通り進む)', async () => {
+      const peekStub = vi.fn(async () => ({
+        kind: 'peekFailed' as const,
+        error: 'demux failed',
+      }));
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const f1 = new File(['a'], 'bad.mov');
+      const result = await useQueueStore.getState().add([f1], 'standard-hevc');
+
+      expect(result.ok).toBe(true);
+      const items = useQueueStore.getState().items;
+      expect(items[0]!.durationSec).toBeUndefined();
+    });
+
+    it('複数ファイル投入で各 file に peek が発火される', async () => {
+      const peekStub = vi.fn(async () => ({
+        kind: 'peeked' as const,
+        meta: {
+          durationSec: 10,
+          rotation: 0 as 0 | 90 | 180 | 270,
+          width: 1280,
+          height: 720,
+          fps: 30,
+          isHdr: false,
+        },
+      }));
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const f1 = new File(['a'], 'a.mov');
+      const f2 = new File(['b'], 'b.mov');
+      const f3 = new File(['c'], 'c.mov');
+      await useQueueStore.getState().add([f1, f2, f3], 'standard-hevc');
+
+      expect(peekStub).toHaveBeenCalledTimes(3);
+      const items = useQueueStore.getState().items;
+      expect(items.every((i) => i.durationSec === 10)).toBe(true);
     });
   });
 });

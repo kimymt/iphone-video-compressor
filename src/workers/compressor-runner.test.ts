@@ -39,6 +39,9 @@ function makeEnv(): {
       .fn()
       .mockResolvedValue({} as FileSystemWritableFileStream),
     runTranscode: (i, o, opts) => transcodeFn(i, o, opts),
+    // V2.x (A2): handlePeek 用 demux スタブ。デフォルトでは未呼び出し、
+    // peek テストケースで vi.fn() に差し替える。
+    demux: vi.fn().mockRejectedValue(new Error('demux mock not configured')),
   };
   return {
     env,
@@ -287,5 +290,121 @@ describe('JobRunner — failed path', () => {
     const runner = new JobRunner(env);
     await runner.handle(transcodeMsg());
     expect(posted[1]).toMatchObject({ type: 'failed', error: 'plain string' });
+  });
+});
+
+// ----- V2.x (A2): handlePeek -----
+
+/**
+ * 共通: handlePeek 用の demux スタブを返すヘルパ。
+ * 成功時の DemuxResult / 失敗時の Error をパラメータで切り替える。
+ */
+function setupPeekEnv(opts: {
+  durationSec?: number;
+  rotation?: 0 | 90 | 180 | 270;
+  width?: number;
+  height?: number;
+  fps?: number;
+  bt2020?: boolean;
+  reject?: Error;
+}) {
+  const env = makeEnv();
+  const disposeSpy = vi.fn();
+  if (opts.reject) {
+    (env.env.demux as ReturnType<typeof vi.fn>).mockRejectedValue(opts.reject);
+  } else {
+    (env.env.demux as ReturnType<typeof vi.fn>).mockResolvedValue({
+      input: { dispose: disposeSpy } as unknown as import('mediabunny').Input,
+      videoTrack: {} as unknown as import('mediabunny').InputVideoTrack,
+      audioTrack: null,
+      durationSec: opts.durationSec ?? 12.5,
+      rotation: opts.rotation ?? 0,
+      width: opts.width ?? 1920,
+      height: opts.height ?? 1080,
+      colorSpace: opts.bt2020
+        ? { primaries: 'bt2020' as unknown as VideoColorPrimaries, transfer: 'pq', matrix: 'bt2020-ncl' as VideoMatrixCoefficients, fullRange: false }
+        : { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false },
+      fps: opts.fps ?? 30,
+    });
+  }
+  return { ...env, disposeSpy };
+}
+
+describe('JobRunner — V2.x (A2) handlePeek', () => {
+  it('demux 成功で peeked を post し、durationSec / rotation / fps / isHdr=false を含む', async () => {
+    const { env, posted, disposeSpy } = setupPeekEnv({ durationSec: 15.0, rotation: 90, fps: 60 });
+    const runner = new JobRunner(env);
+    const file = new File([new Uint8Array(10)], 'in.mp4');
+
+    await runner.handle({ type: 'peek', id: 'peek-1', file });
+
+    expect(posted).toHaveLength(1);
+    const msg = posted[0]!;
+    expect(msg.type).toBe('peeked');
+    if (msg.type !== 'peeked') throw new Error('expected peeked');
+    expect(msg.id).toBe('peek-1');
+    expect(msg.meta.durationSec).toBe(15.0);
+    expect(msg.meta.rotation).toBe(90);
+    expect(msg.meta.fps).toBe(60);
+    expect(msg.meta.isHdr).toBe(false);
+    expect(msg.meta.width).toBe(1920);
+    expect(msg.meta.height).toBe(1080);
+    // Input は dispose() される (リーク防止)
+    expect(disposeSpy).toHaveBeenCalledOnce();
+  });
+
+  it('bt2020 入力で isHdr=true を返す', async () => {
+    const { env, posted } = setupPeekEnv({ bt2020: true });
+    const runner = new JobRunner(env);
+    await runner.handle({ type: 'peek', id: 'peek-2', file: new File([new Uint8Array(10)], 'hdr.mp4') });
+
+    const msg = posted[0]!;
+    expect(msg.type).toBe('peeked');
+    if (msg.type !== 'peeked') throw new Error('expected peeked');
+    expect(msg.meta.isHdr).toBe(true);
+  });
+
+  it('demux 失敗で peekFailed を post (transcode のリセット影響なし)', async () => {
+    const { env, posted } = setupPeekEnv({ reject: new Error('not a video') });
+    const runner = new JobRunner(env);
+    await runner.handle({ type: 'peek', id: 'peek-3', file: new File([new Uint8Array(0)], 'bad.txt') });
+
+    expect(posted).toHaveLength(1);
+    const msg = posted[0]!;
+    expect(msg.type).toBe('peekFailed');
+    if (msg.type !== 'peekFailed') throw new Error('expected peekFailed');
+    expect(msg.id).toBe('peek-3');
+    expect(msg.error).toBe('not a video');
+  });
+
+  it('peek は transcode の currentJobId / terminalSent に影響しない (同 runner で連続実行可能)', async () => {
+    const { env, posted, setTranscodeBehavior } = setupPeekEnv({ durationSec: 5 });
+    setTranscodeBehavior(async () => ({ outputSize: 999, durationSec: 5 }));
+    const runner = new JobRunner(env);
+    const file = new File([new Uint8Array(10)], 'in.mp4');
+
+    // peek → transcode → peek → transcode、すべて成功で post できる
+    await runner.handle({ type: 'peek', id: 'p1', file });
+    await runner.handle(transcodeMsg('t1'));
+    await runner.handle({ type: 'peek', id: 'p2', file });
+    await runner.handle(transcodeMsg('t2'));
+
+    expect(posted.map((m) => m.type)).toEqual([
+      'peeked', // p1
+      'started', 'done', // t1
+      'peeked', // p2
+      'started', 'done', // t2
+    ]);
+  });
+
+  it('Error でない値を throw した場合は String 化', async () => {
+    const env = makeEnv();
+    (env.env.demux as ReturnType<typeof vi.fn>).mockRejectedValue('plain string error');
+    const runner = new JobRunner(env.env);
+    await runner.handle({ type: 'peek', id: 'p1', file: new File([], 'x.mp4') });
+    const msg = env.posted[0]!;
+    expect(msg.type).toBe('peekFailed');
+    if (msg.type !== 'peekFailed') throw new Error('expected peekFailed');
+    expect(msg.error).toBe('plain string error');
   });
 });

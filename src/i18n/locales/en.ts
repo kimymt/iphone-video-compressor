@@ -47,8 +47,10 @@ export const en: Messages = {
     retryDisabledTitle: 'Cannot retry — the input file has been deleted',
     sub: {
       queued: '{size} · {status}',
+      queuedWithEstimate: '{size} → ~{estimatedSize}',
       processing: '{size} · {status}',
       processingEta: '{size} · {duration} remaining',
+      processingWithEstimate: '{size} → ~{estimatedSize}',
       done: '{inputSize} → {outputSize} ({ratio}%)',
       doneNoOutput: '{size} · Done',
       failed: 'This video could not be processed',
