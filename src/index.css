@@ -1,44 +1,66 @@
-/* デザインシステム — CLAUDE.md の「デザインシステム」セクション参照 */
+/* デザインシステム — DESIGN.md (PicsCompresser-aligned) と CLAUDE.md のデザインシステム節を参照 */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  /* Typography */
-  --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-text: 'SF Pro Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'SF Compact', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Typography — PicsCompresser 整合 (-apple-system 先頭、iOS PWA で SF Pro 取得) */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Legacy aliases (既存コンポーネントが参照する `--font-display`/`--font-text` を維持) */
+  --font-display: var(--font-ui);
+  --font-text: var(--font-ui);
 
-  /* Dark mode (デフォルト) */
-  --bg: #0a0a0a;
-  --surface: #1c1c1e;
-  --surface-elevated: #2c2c2e;
-  --label: #ffffff;
-  --label-secondary: rgba(235, 235, 245, 0.6);
+  /* Dark mode (デフォルト) — PicsCompresser 整合 */
+  --bg: #000000;
+  --surface: #1C1C1E;
+  --surface-2: #2C2C2E;
+  --surface-elevated: var(--surface-2); /* legacy alias */
+  --text: #FFFFFF;
+  --label: var(--text); /* legacy alias */
+  --muted: #8E8E93;
+  --label-secondary: rgba(235, 235, 245, 0.6); /* iOS HIG: 半透明で背景と馴染ませる */
   --label-tertiary: rgba(235, 235, 245, 0.3);
-  --accent: #0a84ff;
-  --success: #30d158;
-  --error: #ff3b30;
-  --warning: #ff9f0a;
-  --separator: rgba(84, 84, 88, 0.65);
+  --accent: #4A9472; /* 彩度を下げた苔緑 (dark mode) */
+  --accent-soft: rgba(74, 148, 114, 0.16);
+  --divider: rgba(84, 84, 88, 0.34);
+  --separator: var(--divider); /* legacy alias */
+  --success: #30d158; /* iOS systemGreen — done 状態の semantic clarity を維持 */
+  --error: #FF3B30;
+  --warning: #FF9F0A;
   --glass-tint: rgba(28, 28, 30, 0.7);
+
+  /* Border Radius — PicsCompresser 整合 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  /* Shadow — PicsCompresser 整合 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f2f2f7;
-    --surface: #ffffff;
-    --surface-elevated: #ffffff;
-    --label: #000000;
+    --bg: #F2F2F7;
+    --surface: #FFFFFF;
+    --surface-2: #F9F9FB;
+    --text: #1C1C1E;
+    --muted: #8E8E93;
     --label-secondary: rgba(60, 60, 67, 0.6);
     --label-tertiary: rgba(60, 60, 67, 0.3);
-    --accent: #007aff;
+    --accent: #30694B; /* 苔緑 (light mode) */
+    --accent-soft: rgba(48, 105, 75, 0.08);
+    --divider: rgba(60, 60, 67, 0.12);
     --success: #34c759;
-    --error: #ff3b30;
-    --warning: #ff9500;
-    --separator: rgba(60, 60, 67, 0.36);
+    --error: #FF3B30;
+    --warning: #FF9500;
     --glass-tint: rgba(255, 255, 255, 0.7);
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.06);
   }
 }
 

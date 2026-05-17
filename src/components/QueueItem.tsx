@@ -1,13 +1,16 @@
-// Phase 4b: 1 アイテム分の UI。6 ステータスに応じてアイコン / 進捗バー / アクションを切り替える。
+// Phase 4b: 1 アイテム分の UI。6 ステータスに応じてアイコン / 進捗 / アクションを切り替える。
 // Phase 4c: failed/cancelled に Retry ボタンを追加 (input が残っていれば有効)。
 // Phase 5: done に Share ボタンを追加 (outputOpfsPath を共有 / ダウンロード)。
 // CLAUDE.md「インタラクションステートカバレッジ」表に対応。
 // V2: i18n 化 (status / aria / sub-text を全て t() 経由)。
+// V2 (design-system): 線形 ProgressBar → CircularProgress に置換 (DESIGN.md
+// 「線形プログレスバーを使用禁止」決定に整合)。% は ring 内側に表示し、
+// 2nd row は廃止して 1 行レイアウトに圧縮。
 //
 // 本ファイルが提供するのは:
 // - queued: Clock + テキスト + Cancel + Remove
 // - starting: Loader (spin) + テキスト + Cancel
-// - processing: ProgressBar + percent + ETA + Cancel
+// - processing: CircularProgress (内側に %) + ETA + Cancel
 // - done: CheckCircle2 (success) + 圧縮率 + Share + Remove
 // - failed: AlertTriangle (error) + エラーメッセージ + Retry + Remove
 // - cancelled: XCircle (secondary) + テキスト + Retry + Remove
@@ -39,22 +42,63 @@ function useStatusLabel(): (status: QueueItem['status']) => string {
   return (status) => t(`status.${status}`);
 }
 
-/** 進捗バー (0..100)。Reduced Motion 対応は CSS 側で transition を消す。 */
-function ProgressBar({ value }: { value: number }) {
+/**
+ * 円形プログレス (0..100)。DESIGN.md 「線形プログレスバーを使用禁止」決定に従い、
+ * iOS Photos 風の ring が外周を埋めていく表現。
+ * - 32x32 SVG、2px ストローク
+ * - 背景 ring: var(--divider)
+ * - 進捗 arc: var(--accent) (PicsCompresser 苔緑、dark #4A9472 / light #30694B)
+ * - 内側: "{percent}%" を tabular mono (10px、--text) で表示
+ * - Reduced Motion は CSS 側の universal `transition-duration: 0.001ms` で抑制
+ *
+ * `data-testid="progress-fill"` は Phase 4b 時代の互換用に残す (既存テストの
+ * `screen.getByRole('progressbar')` は外側 div 経由で同様に拾える)。
+ */
+function CircularProgress({ value }: { value: number }) {
   const clamped = Math.max(0, Math.min(100, value));
+  const size = 32;
+  const strokeWidth = 2;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (clamped / 100) * circumference;
   return (
     <div
       role="progressbar"
       aria-valuenow={clamped}
       aria-valuemin={0}
       aria-valuemax={100}
-      className="h-1 w-full overflow-hidden rounded-full bg-[var(--separator)]"
+      data-testid="progress-fill"
+      className="relative flex shrink-0 items-center justify-center"
+      style={{ width: size, height: size }}
     >
-      <div
-        data-testid="progress-fill"
-        className="motion-safe:transition-transform motion-safe:duration-200 h-full origin-left bg-[var(--accent)]"
-        style={{ transform: `scaleX(${clamped / 100})` }}
-      />
+      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--divider)"
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          className="motion-safe:transition-[stroke-dashoffset] motion-safe:duration-200"
+        />
+      </svg>
+      <span
+        aria-hidden="true"
+        className="tabular absolute text-[10px] font-medium leading-none text-[var(--text)]"
+      >
+        {Math.round(clamped)}%
+      </span>
     </div>
   );
 }
@@ -73,7 +117,7 @@ function StatusIcon({ status }: { status: QueueItem['status'] }) {
         />
       );
     case 'processing':
-      return null; // ProgressBar が代替
+      return null; // CircularProgress が右クラスタで代替 (status === 'processing' 分岐)
     case 'done':
       return (
         <CheckCircle2
@@ -96,7 +140,6 @@ export default function QueueItemRow({ item }: QueueItemProps) {
   const t = useT();
   const statusLabel = useStatusLabel();
 
-  const showProgressBar = item.status === 'processing';
   const showCancelBtn = item.status === 'queued' || item.status === 'starting' || item.status === 'processing';
   // Retry は failed / cancelled で表示。done は input 削除済みなので表示しない (Phase 4a 仕様)。
   const showRetryBtn = item.status === 'failed' || item.status === 'cancelled';
@@ -135,7 +178,11 @@ export default function QueueItemRow({ item }: QueueItemProps) {
           </p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">
-          <StatusIcon status={item.status} />
+          {item.status === 'processing' ? (
+            <CircularProgress value={item.progress} />
+          ) : (
+            <StatusIcon status={item.status} />
+          )}
           {showCancelBtn && (
             <button
               type="button"
@@ -181,15 +228,6 @@ export default function QueueItemRow({ item }: QueueItemProps) {
         </div>
       </div>
 
-      {/* 2行目: processing のときだけ ProgressBar を表示 */}
-      {showProgressBar && (
-        <div className="flex items-center gap-3">
-          <ProgressBar value={item.progress} />
-          <span className="tabular shrink-0 text-xs text-[var(--label-secondary)]">
-            {Math.round(item.progress)}%
-          </span>
-        </div>
-      )}
     </li>
   );
 }

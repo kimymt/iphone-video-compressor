@@ -81,7 +81,9 @@ npx playwright install webkit
 
 ## デザインシステム
 
-iOS 26 ネイティブ感を目標としつつ、Web 制約内で実現できる範囲のトークン群。Apple HIG の iOS 26 Liquid Glass design をベース、Tailwind の上に CSS 変数で表現。
+**Source of truth は [DESIGN.md](./DESIGN.md)** (2026-05-17 から、PicsCompresser と同じ「Apple純正かと思った」軸に整合)。本書ではコード実装時に Claude が即参照する quick reference をまとめる。タイポグラフィ詳細・Anti-Patterns・Decisions Log は DESIGN.md 参照。
+
+iOS 26 ネイティブ感を目標としつつ、Web 制約内で実現できる範囲のトークン群。Apple HIG をベース、Tailwind の上に CSS 変数で表現。アクセント色は iOS Blue ではなく **苔緑 (dark `#4A9472` / light `#30694B`)** で「Apple構造文法を借りつつ語彙で独自性」を出す方針。
 
 ### タイポグラフィ
 
@@ -96,48 +98,59 @@ iOS 26 ネイティブ感を目標としつつ、Web 制約内で実現できる
 
 ```css
 :root {
-  --font-display: 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-text: 'SF Pro Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'SF Compact', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* PicsCompresser 整合 — -apple-system 先頭で iOS PWA で SF Pro を正規取得 */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Legacy aliases (既存コンポーネント互換) */
+  --font-display: var(--font-ui);
+  --font-text: var(--font-ui);
 }
 ```
 
-iOS は SF Pro / SF Compact をシステムフォントとしてホスト、`-apple-system` でフォールバック。Dynamic Type 連携には全テキストを **rem 単位**で記述（`html { font-size: 100% }`、Tailwind のスケールも rem-based に）。
+iOS は SF Pro / SF Mono をシステムフォントとしてホスト、`-apple-system` でフォールバック。iOS PWA で SF Pro を正規取得する唯一のルートは `-apple-system` を先頭に置くこと (DESIGN.md Decisions Log 参照)。Dynamic Type 連携には全テキストを **rem 単位**で記述（`html { font-size: 100% }`、Tailwind のスケールも rem-based に）。
 
 ### カラーパレット（CSS 変数）
 
-ダークモードがデフォルト（仕様書の `background_color: #0a0a0a`）。`prefers-color-scheme: light` で切替:
+ダークモードがデフォルト (PicsCompresser 整合で `#000000` 純黒)。`prefers-color-scheme: light` で切替:
 
 ```css
 :root {
-  /* Dark mode（デフォルト） */
-  --bg: #0a0a0a;
-  --surface: #1c1c1e;
-  --surface-elevated: #2c2c2e;
-  --label: #ffffff;
-  --label-secondary: rgba(235, 235, 245, 0.6);
+  /* Dark mode（デフォルト） — PicsCompresser 整合 */
+  --bg: #000000;
+  --surface: #1C1C1E;
+  --surface-2: #2C2C2E;
+  --surface-elevated: var(--surface-2); /* legacy alias */
+  --text: #FFFFFF;
+  --label: var(--text); /* legacy alias */
+  --muted: #8E8E93;
+  --label-secondary: rgba(235, 235, 245, 0.6); /* iOS HIG 半透明、layering 用 */
   --label-tertiary: rgba(235, 235, 245, 0.3);
-  --accent: #0a84ff;          /* iOS systemBlue (dark) */
+  --accent: #4A9472;        /* 苔緑 (dark)、iOS Blue ではない */
+  --accent-soft: rgba(74, 148, 114, 0.16);
+  --divider: rgba(84, 84, 88, 0.34);
+  --separator: var(--divider); /* legacy alias */
   --success: #30d158;
-  --error: #ff3b30;
-  --warning: #ff9f0a;
-  --separator: rgba(84, 84, 88, 0.65);
+  --error: #FF3B30;
+  --warning: #FF9F0A;
   --glass-tint: rgba(28, 28, 30, 0.7);
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 12px; --radius-xl: 14px;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f2f2f7;
-    --surface: #ffffff;
-    --surface-elevated: #ffffff;
-    --label: #000000;
+    --bg: #F2F2F7;
+    --surface: #FFFFFF;
+    --surface-2: #F9F9FB;
+    --text: #1C1C1E;
+    --muted: #8E8E93;
     --label-secondary: rgba(60, 60, 67, 0.6);
     --label-tertiary: rgba(60, 60, 67, 0.3);
-    --accent: #007aff;
+    --accent: #30694B;      /* 苔緑 (light) */
+    --accent-soft: rgba(48, 105, 75, 0.08);
+    --divider: rgba(60, 60, 67, 0.12);
     --success: #34c759;
-    --error: #ff3b30;
-    --warning: #ff9500;
-    --separator: rgba(60, 60, 67, 0.36);
+    --error: #FF3B30;
+    --warning: #FF9500;
     --glass-tint: rgba(255, 255, 255, 0.7);
   }
 }
@@ -145,7 +158,7 @@ iOS は SF Pro / SF Compact をシステムフォントとしてホスト、`-ap
 
 Tailwind は `bg-[var(--bg)]` のように `[]` 構文で CSS 変数を呼び出す。
 
-WCAG AA (4.5:1) を全テキストで確保。`--label-secondary` on dark `--bg` は ~7:1 ✓、`--accent` on `--bg` は ~9:1 ✓。
+WCAG AA (4.5:1) を全テキストで確保。`--label-secondary` on dark `--bg` は ~7:1 ✓、`--accent` (`#4A9472`) on dark `--bg` (`#000000`) は ~6.2:1 ✓ (旧 iOS Blue `#0a84ff` の ~9:1 から低下するが AA 通過、ロゴ・アイコン用途では 3:1 で十分)。
 
 ### スペーシング
 
@@ -173,6 +186,7 @@ Glass 効果を**乱用しない**。以下の 2 箇所に限定:
 - **Default**: 0.25s `cubic-bezier(0.0, 0.0, 0.58, 1.0)`（iOS easeOut）
 - **Spring（シート登場）**: `cubic-bezier(0.32, 0.72, 0, 1)` 0.35s
 - **完了アニメ**: CheckCircle2 を 0.5s ease-out で scale 0 → 1 + opacity 0 → 1
+- **進捗 (processing)**: **CircularProgress** (32x32 SVG、2px ストローク、`stroke-dashoffset` を 200ms transition)。線形プログレスバーは DESIGN.md Anti-Patterns で禁止
 - **Reduced Motion**: `@media (prefers-reduced-motion: reduce)` でアニメ全停止、scale は即時切替
 
 ### アイコンライブラリ
@@ -183,7 +197,7 @@ Glass 効果を**乱用しない**。以下の 2 箇所に限定:
 |---|---|
 | status: queued | `Clock` |
 | status: starting | `Loader` (回転アニメ) |
-| status: processing | (ProgressBar に代替) |
+| status: processing | (CircularProgress 内側 % に代替、線形バーは禁止) |
 | status: done | `CheckCircle2` (`--success`) |
 | status: failed | `AlertTriangle` (`--error`) |
 | status: cancelled | `XCircle` (`--label-secondary`) |
