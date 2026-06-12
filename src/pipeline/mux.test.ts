@@ -1,5 +1,5 @@
 // Phase 3b: mux.ts のユニットテスト。
-// mediabunny を vi.mock で差し替えて、Mp4OutputFormat + fastStart='in-memory' の生成、
+// mediabunny を vi.mock で差し替えて、Mp4OutputFormat + fastStart=false の生成、
 // 音声有無による addAudioTrack の分岐、setMetadataTags を呼ばないこと、
 // StreamTarget の writable 連携 (seek+write+close) を verify する。
 
@@ -70,9 +70,9 @@ describe('createMuxer', () => {
     ) => import('mediabunny').StreamTarget)({});
   }
 
-  it('Mp4OutputFormat に fastStart=in-memory を指定', async () => {
+  it('Mp4OutputFormat に fastStart=false を指定 (ストリーミング書き出し、moov 末尾)', async () => {
     await createMuxer(makeTarget(), { videoCodec: 'hevc', audioCodec: 'aac' });
-    expect(mocks.Mp4OutputFormatCtor).toHaveBeenCalledWith({ fastStart: 'in-memory' });
+    expect(mocks.Mp4OutputFormatCtor).toHaveBeenCalledWith({ fastStart: false });
   });
 
   it('hevc + aac で video + audio 両トラック追加', async () => {
@@ -149,6 +149,14 @@ describe('createOpfsStreamTarget', () => {
       close: vi.fn().mockResolvedValue(undefined),
     };
   }
+
+  it('StreamTarget は chunked=true で生成 (OPFS への細切れ write を集約)', () => {
+    const writable = makeWritable();
+    createOpfsStreamTarget(writable as unknown as FileSystemWritableFileStream);
+    expect(mocks.StreamTargetCtor).toHaveBeenCalledWith(expect.any(WritableStream), {
+      chunked: true,
+    });
+  });
 
   it('StreamTargetChunk を writable.seek + writable.write に変換', async () => {
     const writable = makeWritable();

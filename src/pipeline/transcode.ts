@@ -127,6 +127,14 @@ function ensureEven(n: number): number {
 export const KEYFRAME_INTERVAL_US = 2_000_000;
 
 /**
+ * muxer への add() Promise を溜める上限。これを超えたら decode ループ内で
+ * Promise.all で drain する。muxer (OPFS write) が encode より遅い場合に
+ * ループへ backpressure を伝え、pending 配列の無制限成長 (長尺動画でチャンク数ぶん
+ * の Promise 保持) を防ぐ。
+ */
+export const MUX_PENDING_DRAIN = 16;
+
+/**
  * このフレームを keyframe (IDR) として encode すべきかを判定する純粋関数。
  *
  * - 最初のフレーム (frameIndex === 0) は必ず IDR
@@ -304,14 +312,26 @@ async function runVideoPipeline(
   // VideoEncoder: chunk を mediabunny に流す。
   // - 初回 metadata に decoderConfig が含まれる、mediabunny にそのまま渡せば OK
   // - エラーは捕捉して transcode 側で throw する
+  //
+  // muxer への add() は Promise を返す (writer backpressure 連動) が、output callback は
+  // 同期なので直接 await できない。pendingAdds に溜め、エラーは muxError に捕捉して
+  // 「未 await の rejection」を作らない (Worker の unhandledrejection に漏らさない)。
+  // pendingAdds は decode ループ内で MUX_PENDING_DRAIN 個ごとに drain することで
+  // (1) 配列の無制限成長を防ぎ (2) muxer/OPFS 側の backpressure をループに伝える。
   let encoderError: Error | null = null;
+  let muxError: Error | null = null;
   const pendingAdds: Promise<void>[] = [];
+  const trackAdd = (p: Promise<void>): void => {
+    pendingAdds.push(
+      p.catch((e) => {
+        muxError ??= e instanceof Error ? e : new Error(String(e));
+      }),
+    );
+  };
   const encoder = new VideoEncoder({
     output: (chunk, metadata) => {
       const packet = EncodedPacket.fromEncodedChunk(chunk);
-      // muxer への add は Promise を返す (バックプレッシャー連動)。
-      // 直接 await はできない (output callback は同期) ので Promise を pending リストに溜める。
-      pendingAdds.push(muxer.videoSource.add(packet, metadata));
+      trackAdd(muxer.videoSource.add(packet, metadata));
     },
     error: (e) => {
       encoderError = e instanceof Error ? e : new Error(String(e));
@@ -337,6 +357,10 @@ async function runVideoPipeline(
       if (encoderError) {
         sample[Symbol.dispose]();
         throw new TranscodeError('encoder error', encoderError);
+      }
+      if (muxError) {
+        sample[Symbol.dispose]();
+        throw new TranscodeError('mux write error', muxError);
       }
 
       // VideoSample → VideoFrame (rotation メタは VideoSample 側に残るが、ここでは
@@ -397,6 +421,13 @@ async function runVideoPipeline(
       frameIndex++;
       frame.close();
 
+      // 6. Mux backpressure: 溜まった add() を定期的に drain する
+      //    (muxer / OPFS write が遅い場合にループを待たせる)
+      if (pendingAdds.length >= MUX_PENDING_DRAIN) {
+        await Promise.all(pendingAdds.splice(0));
+        if (muxError) throw new TranscodeError('mux write error', muxError);
+      }
+
       progress.processedFrames++;
       emitProgress(progress, dem, opts);
     }
@@ -410,6 +441,7 @@ async function runVideoPipeline(
 
   // mediabunny への add は output callback で非同期に投入したので、ここで全て await
   await Promise.all(pendingAdds);
+  if (muxError) throw new TranscodeError('mux write error', muxError);
 }
 
 // ---- 内部: audio pipeline ----
@@ -429,12 +461,18 @@ async function runAudioPipeline(
   ]);
 
   let encoderError: Error | null = null;
+  let muxError: Error | null = null;
   const pendingAdds: Promise<void>[] = [];
   const audioSource = muxer.audioSource;
   const encoder = new AudioEncoder({
     output: (chunk, metadata) => {
       const packet = EncodedPacket.fromEncodedChunk(chunk);
-      pendingAdds.push(audioSource.add(packet, metadata));
+      // video pipeline と同様、rejection を捕捉して unhandledrejection に漏らさない
+      pendingAdds.push(
+        audioSource.add(packet, metadata).catch((e) => {
+          muxError ??= e instanceof Error ? e : new Error(String(e));
+        }),
+      );
     },
     error: (e) => {
       encoderError = e instanceof Error ? e : new Error(String(e));
@@ -458,6 +496,10 @@ async function runAudioPipeline(
         sample[Symbol.dispose]();
         throw new TranscodeError('audio encoder error', encoderError);
       }
+      if (muxError) {
+        sample[Symbol.dispose]();
+        throw new TranscodeError('audio mux write error', muxError);
+      }
       // A/V 共通 shift を適用 (sample.setTimestamp は秒、in-place 書き換え)
       if (sharedShiftSec > 0) {
         sample.setTimestamp(sample.timestamp + sharedShiftSec);
@@ -466,6 +508,12 @@ async function runAudioPipeline(
       sample[Symbol.dispose]();
       encoder.encode(audioData);
       audioData.close();
+
+      // Mux backpressure (video pipeline と同じ drain)
+      if (pendingAdds.length >= MUX_PENDING_DRAIN) {
+        await Promise.all(pendingAdds.splice(0));
+        if (muxError) throw new TranscodeError('audio mux write error', muxError);
+      }
     }
 
     await encoder.flush();
@@ -477,6 +525,7 @@ async function runAudioPipeline(
   }
 
   await Promise.all(pendingAdds);
+  if (muxError) throw new TranscodeError('audio mux write error', muxError);
 }
 
 // ---- 内部: audio pass-through (V2.x C1) ----

@@ -59,7 +59,11 @@ export async function readFromOpfs(path: string): Promise<File> {
 
 /**
  * OPFS パスのファイルを削除。
- * 存在しない場合は黙ってスキップ。
+ * 存在しない場合 (NotFoundError) は黙ってスキップ。
+ * それ以外の失敗 (ロック中の InvalidModificationError 等) は console.warn してから
+ * rethrow する。旧実装は黙殺していたため、「削除済み」とユーザが認識している入力動画が
+ * 実は OPFS に残存し続けても観測不能だった (プライバシー + ストレージリーク)。
+ * 呼び出し側 (queueStore) は best-effort 削除箇所で `.catch(() => {})` 済み。
  */
 export async function deleteFromOpfs(path: string): Promise<void> {
   try {
@@ -68,8 +72,11 @@ export async function deleteFromOpfs(path: string): Promise<void> {
     await dir.removeEntry(fileName);
   } catch (err) {
     if (err instanceof DOMException && err.name === 'NotFoundError') return;
-    // 不正パスは投げ、その他は黙る。
-    if (err instanceof Error && err.message.startsWith('不正な OPFS パス')) throw err;
+    if (!(err instanceof Error && err.message.startsWith('不正な OPFS パス'))) {
+      // eslint-disable-next-line no-console
+      console.warn(`OPFS の削除に失敗: ${path}`, err);
+    }
+    throw err;
   }
 }
 

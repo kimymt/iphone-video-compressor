@@ -29,7 +29,10 @@ export default defineConfig({
   ],
   webServer: {
     // vite preview は dist/ を 4173 で serve する。事前に build が必要。
-    command: 'npm run build && npx vite preview --port 4173',
+    // VITE_ALLOW_DEV_OVERRIDE=1: 本番ビルドでは ?dev=1 の capability override を
+    // 無効化したため (capability.ts isDevOverrideActive)、E2E preview ビルドのみ
+    // 明示的にオプトインする。Cloudflare Pages の本番ビルドでは設定しないこと。
+    command: 'VITE_ALLOW_DEV_OVERRIDE=1 npm run build && npx vite preview --port 4173',
     url: 'http://localhost:4173',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

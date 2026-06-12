@@ -9,8 +9,9 @@
 //   が hevc プリセットの並列度を 1 に降格させる根拠データになる。
 //
 // アルゴリズム:
-//   1. OffscreenCanvas で N フレーム合成 (グラデ + 移動矩形、エンコーダが trivial 入力で
-//      過度に圧縮できないように 1 フレームごとに見た目を変える)
+//   1. OffscreenCanvas で encode ループ内に 1 枚ずつフレーム合成 (グラデ + 移動矩形、
+//      エンコーダが trivial 入力で過度に圧縮できないように 1 フレームごとに見た目を変える。
+//      事前一括生成はしない: 720p RGBA × 60 枚 ≈ 220MB のメモリスパイクになるため)
 //   2. encoder × 1 で serial 計測 → serialMs
 //   3. encoder × 2 並列で計測 → parallelMs
 //   4. speedup = (2 * serialMs) / parallelMs
@@ -100,15 +101,24 @@ function getCtor<T>(name: string, override: T | undefined): T {
   return found as T;
 }
 
-/** フレーム配列を合成。各フレームを VideoFrame として返す (呼び出し側で .close() 必須)。 */
-function generateFrames(
+/** i 番目の bench フレームを合成して返すファクトリを作る。
+ *
+ *  旧実装は全フレームを事前生成して配列で保持していたが、720p RGBA は 1 枚 ~3.7MB で
+ *  60 枚 ≈ 220MB (parallel 計測では 2 本ぶん ≈ 440MB) を同時確保することになり、
+ *  起動時の自動 bench で iOS Safari のタブメモリ上限を圧迫していた。
+ *  encode ループ内で 1 枚ずつ生成 → encode 直後に close することで、生存フレームを
+ *  encodeQueueSize の backpressure 上限 (HEVC_INFLIGHT_LIMIT) 程度に抑える。
+ *  canvas 描画 (fillRect 2 回) はサブ ms なので計測値への影響は無視できる。
+ *
+ *  返す VideoFrame は呼び出し側で .close() 必須。 */
+function makeFrameFactory(
   width: number,
   height: number,
   count: number,
   fps: number,
   OffscreenCanvasCtor: typeof OffscreenCanvas,
   VideoFrameCtor: typeof VideoFrame,
-): VideoFrame[] {
+): (i: number) => VideoFrame {
   const canvas = new OffscreenCanvasCtor(width, height);
   // bench だけで使うので alpha は不要、willReadFrequently も不要。
   const ctx = canvas.getContext('2d', { alpha: false }) as
@@ -117,9 +127,8 @@ function generateFrames(
   if (!ctx) {
     throw new Error('runHevcParallelismBench: OffscreenCanvas 2d context unavailable');
   }
-  const frames: VideoFrame[] = [];
   const frameDurationUs = Math.round(1_000_000 / fps);
-  for (let i = 0; i < count; i++) {
+  return (i: number): VideoFrame => {
     // フレームごとに見た目を変える: hue 回転 + 横移動する白矩形。
     // 同一フレーム連続は encoder が極端に圧縮できて bench にならない。
     const hue = Math.round((i / Math.max(count, 1)) * 360);
@@ -128,22 +137,22 @@ function generateFrames(
     ctx.fillStyle = 'white';
     const x = (i / Math.max(count, 1)) * (width - 100);
     ctx.fillRect(x, height / 2 - 50, 100, 100);
-    const frame = new VideoFrameCtor(canvas as unknown as CanvasImageSource, {
+    return new VideoFrameCtor(canvas as unknown as CanvasImageSource, {
       timestamp: i * frameDurationUs,
       duration: frameDurationUs,
     });
-    frames.push(frame);
-  }
-  return frames;
+  };
 }
 
-/** 1 つの encoder で frames を順に encode し終わるまで待つ。
+/** 1 つの encoder で frameCount 枚を順に生成 → encode し終わるまで待つ。
+ *  - フレームは frameFactory で 1 枚ずつ遅延生成、encode 直後に close (メモリ上限対策)
  *  - 先頭フレームは keyframe 強制 (CLAUDE.md ハマりどころで thumbnail 真っ白問題)
  *  - encodeQueueSize > HEVC_INFLIGHT_LIMIT で backpressure
  *  - flush() で出力を全て吐かせてから close()
  */
 async function encodeFramesOnce(
-  frames: VideoFrame[],
+  frameCount: number,
+  frameFactory: (i: number) => VideoFrame,
   config: VideoEncoderConfig,
   VideoEncoderCtor: typeof VideoEncoder,
   signal?: AbortSignal,
@@ -160,13 +169,17 @@ async function encodeFramesOnce(
   encoder.configure(config);
 
   try {
-    for (let i = 0; i < frames.length; i++) {
+    for (let i = 0; i < frameCount; i++) {
       if (signal?.aborted) throw new HevcBenchAbortError();
       if (encoderError) throw encoderError;
-      const frame = frames[i];
-      if (frame === undefined) continue; // 通常起こらない (TS strict 対策)
-      const opts = i === 0 ? { keyFrame: true } : undefined;
-      encoder.encode(frame, opts);
+      const frame = frameFactory(i);
+      try {
+        const opts = i === 0 ? { keyFrame: true } : undefined;
+        encoder.encode(frame, opts);
+      } finally {
+        // encode() は内部でフレームを保持するので、呼び出し側コピーは即 close してよい
+        frame.close();
+      }
       // backpressure: HEVC は presets.MAX_INFLIGHT_FRAMES.hevc=4 と揃える
       while (encoder.encodeQueueSize > HEVC_INFLIGHT_LIMIT) {
         if (signal?.aborted) throw new HevcBenchAbortError();
@@ -235,8 +248,8 @@ export async function runHevcParallelismBench(
     latencyMode: 'quality',
   };
 
-  // ---- Serial run: encoder × 1 × N フレーム ----
-  const serialFrames = generateFrames(
+  // ---- Serial run: encoder × 1 × N フレーム (フレームは遅延生成) ----
+  const serialFactory = makeFrameFactory(
     width,
     height,
     frameCount,
@@ -244,26 +257,17 @@ export async function runHevcParallelismBench(
     OffscreenCanvasCtor,
     VideoFrameCtor,
   );
-  let serialMs: number;
-  try {
-    const t0 = now();
-    await encodeFramesOnce(serialFrames, config, VideoEncoderCtor, signal);
-    serialMs = now() - t0;
-  } finally {
-    for (const f of serialFrames) {
-      try {
-        f.close();
-      } catch {
-        /* idempotent close */
-      }
-    }
-  }
+  const t0Serial = now();
+  await encodeFramesOnce(frameCount, serialFactory, config, VideoEncoderCtor, signal);
+  const serialMs = now() - t0Serial;
 
   if (signal?.aborted) throw new HevcBenchAbortError();
 
   // ---- Parallel run: encoder × 2 同時 × N フレーム/each ----
-  // 各 encoder に独立した frames を渡す (同じ VideoFrame は 2 つの encoder に渡せない)。
-  const parallelFramesA = generateFrames(
+  // 各 encoder に独立した factory (= 独立した canvas) を渡す。同じ VideoFrame は
+  // 2 つの encoder に渡せないし、canvas を共有すると 2 ループの interleave で
+  // 描画内容が混ざるため、canvas ごと分離する。
+  const parallelFactoryA = makeFrameFactory(
     width,
     height,
     frameCount,
@@ -271,7 +275,7 @@ export async function runHevcParallelismBench(
     OffscreenCanvasCtor,
     VideoFrameCtor,
   );
-  const parallelFramesB = generateFrames(
+  const parallelFactoryB = makeFrameFactory(
     width,
     height,
     frameCount,
@@ -279,23 +283,12 @@ export async function runHevcParallelismBench(
     OffscreenCanvasCtor,
     VideoFrameCtor,
   );
-  let parallelMs: number;
-  try {
-    const t0 = now();
-    await Promise.all([
-      encodeFramesOnce(parallelFramesA, config, VideoEncoderCtor, signal),
-      encodeFramesOnce(parallelFramesB, config, VideoEncoderCtor, signal),
-    ]);
-    parallelMs = now() - t0;
-  } finally {
-    for (const f of [...parallelFramesA, ...parallelFramesB]) {
-      try {
-        f.close();
-      } catch {
-        /* idempotent close */
-      }
-    }
-  }
+  const t0Parallel = now();
+  await Promise.all([
+    encodeFramesOnce(frameCount, parallelFactoryA, config, VideoEncoderCtor, signal),
+    encodeFramesOnce(frameCount, parallelFactoryB, config, VideoEncoderCtor, signal),
+  ]);
+  const parallelMs = now() - t0Parallel;
 
   // 0 除算ガード (now() が同じ値を返した = jsdom mock の suspicious case)
   const speedup = parallelMs > 0 ? (2 * serialMs) / parallelMs : 0;

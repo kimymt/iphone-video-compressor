@@ -206,6 +206,20 @@ describe('maybeAutoRunHevcBench', () => {
     if (first.status === 'started') await first.promise;
   });
 
+  it('キュー処理中 (isQueueBusy=true) は skip (reason="queue-busy")', () => {
+    const bench = vi.fn();
+    const setHevcBench = vi.fn();
+    const setHevcBenchSlowdown = vi.fn(async () => {});
+    const result = maybeAutoRunHevcBench(
+      { hevcEncode: true },
+      null,
+      {},
+      { bench, setHevcBench, setHevcBenchSlowdown, isQueueBusy: () => true },
+    );
+    expect(result).toEqual({ status: 'skipped', reason: 'queue-busy' });
+    expect(bench).not.toHaveBeenCalled();
+  });
+
   it('null record + hevc 対応 → started (bench が走る)', async () => {
     const benchResult = makeRecord({ slowdown: true });
     const bench = vi.fn(async () => benchResult);

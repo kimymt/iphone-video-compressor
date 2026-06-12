@@ -102,6 +102,10 @@ export async function runAndPersistHevcBench(
 
 /** 自動実行のエントリポイント。App.tsx の useEffect から呼ぶ。
  *  - envCheck.hevcEncode が false なら skip
+ *  - キューが処理中 (isProcessing) なら skip — bench (2 並列 HEVC encoder) が
+ *    実ジョブと VideoToolbox を取り合うと、実ジョブが遅くなるうえ計測値も歪んで
+ *    slowdown を誤判定し、以後並列度が恒久的に 1 へ降格してしまう。
+ *    App.tsx 側で isProcessing が false に戻ったタイミングで再評価される。
  *  - shouldRunBench(record) が false なら skip
  *  - 既に bench が走っている (runAndPersistHevcBench の inFlight) なら skip
  *  - 失敗は console.warn のみ (致命的でない、次回起動で再試行)
@@ -111,17 +115,24 @@ export async function runAndPersistHevcBench(
  *    - { status: 'skipped', reason } → skip 理由 (テストで観測可能) */
 export type AutoRunResult =
   | { status: 'started'; promise: Promise<HevcBenchResult> }
-  | { status: 'skipped'; reason: 'hevc-unsupported' | 'fresh' | 'in-flight' };
+  | { status: 'skipped'; reason: 'hevc-unsupported' | 'fresh' | 'in-flight' | 'queue-busy' };
+
+export interface MaybeAutoRunDeps extends RunAndPersistDeps {
+  /** キューが処理中かの判定 (default: queueStore.isProcessing)。テストで差し替え可能。 */
+  isQueueBusy?: () => boolean;
+}
 
 export function maybeAutoRunHevcBench(
   envCheck: { hevcEncode: boolean },
   currentRecord: HevcBenchResult | null,
   options: HevcBenchOptions = {},
-  deps: RunAndPersistDeps = {},
+  deps: MaybeAutoRunDeps = {},
   now: () => number = Date.now,
 ): AutoRunResult {
+  const isQueueBusy = deps.isQueueBusy ?? (() => useQueueStore.getState().isProcessing);
   if (!envCheck.hevcEncode) return { status: 'skipped', reason: 'hevc-unsupported' };
   if (inFlight !== null) return { status: 'skipped', reason: 'in-flight' };
+  if (isQueueBusy()) return { status: 'skipped', reason: 'queue-busy' };
   if (!shouldRunBench(currentRecord, now)) return { status: 'skipped', reason: 'fresh' };
 
   // runAndPersistHevcBench が unified lock を管理する。

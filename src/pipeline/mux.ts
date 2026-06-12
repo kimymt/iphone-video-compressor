@@ -1,5 +1,10 @@
 // Phase 3b: mediabunny の Output を薄くラップする mux 層。
-// - Mp4OutputFormat + fastStart='in-memory' (iOS Photos が moov 先頭を要求)
+// - Mp4OutputFormat + fastStart=false (moov 末尾、真のストリーミング書き出し)
+//   旧実装の 'in-memory' は finalize まで全メディアデータを Worker メモリに保持するため、
+//   長尺・高ビットレート動画で出力サイズぶん RAM を消費して iOS Safari のタブメモリ
+//   上限でクラッシュし得た。moov 先頭 (Fast Start) は HTTP プログレッシブ再生用の
+//   最適化で、Photos へのローカル保存・再生には不要。
+// - StreamTarget は chunked=true (16MiB 単位) で OPFS への細切れ write を集約
 // - EncodedVideoPacketSource('hevc' or 'avc') / EncodedAudioPacketSource('aac')
 // - hvc1 box は mediabunny のデフォルト (isobmff-boxes.js で 'hevc'→'hvc1' マップ)
 // - setMetadataTags を呼ばないことで EXIF / 位置情報の漏出を防ぐ (ハマりどころ 26)
@@ -41,8 +46,12 @@ export type MuxerHandle = {
  * OPFS の FileSystemWritableFileStream を mediabunny の StreamTarget に橋渡しする。
  *
  * StreamTargetChunk は `{ type: 'write', data, position }` の形で位置指定書き込みを行う。
- * `fastStart: 'in-memory'` 時は writes が monotonic (in order) であることが保証されるが、
- * 将来 fastStart を変えた時の互換性のため seek + write の両方を実装する。
+ * `fastStart: false` ではメディアデータは前方へ順次書かれるが、finalize 時に
+ * mdat ヘッダのサイズパッチで先頭方向への seek-back が発生するため、
+ * seek + write で任意位置への書き込みに対応する。
+ *
+ * `chunked: true` で mediabunny 側が 16MiB 単位にバッファしてから flush するため、
+ * パケットごとの細かい OPFS write (syscall) を避けられる。
  *
  * `getBytesWritten()` は出力済みの最大バイト位置を返す (= 最終ファイルサイズ)。
  */
@@ -70,7 +79,7 @@ export function createOpfsStreamTarget(writable: FileSystemWritableFileStream): 
     },
   });
   return {
-    target: new StreamTarget(stream),
+    target: new StreamTarget(stream, { chunked: true }),
     getBytesWritten: () => bytesWritten,
   };
 }
@@ -78,8 +87,8 @@ export function createOpfsStreamTarget(writable: FileSystemWritableFileStream): 
 /**
  * MP4 (hvc1 / avc1) muxer を生成し、output.start() を済ませた状態の handle を返す。
  *
- * 仕様 (CLAUDE.md):
- * - Mp4OutputFormat + fastStart='in-memory' で moov 先頭
+ * 仕様 (CLAUDE.md「outputWritable にストリーミング書き出し」):
+ * - Mp4OutputFormat + fastStart=false で moov 末尾 (メモリ最小、出力サイズ非依存)
  * - EncodedVideoPacketSource はコーデック種別だけ指定 (HEVC レベルは packet metadata 経由)
  * - setMetadataTags は呼ばない → EXIF / 位置情報なし
  *
@@ -92,7 +101,7 @@ export async function createMuxer(
   config: MuxConfig,
 ): Promise<MuxerHandle> {
   const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+    format: new Mp4OutputFormat({ fastStart: false }),
     target,
   });
 

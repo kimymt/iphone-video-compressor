@@ -367,4 +367,37 @@ describe('peekFile — V2.x (A2) 投機的 demux', () => {
     await p;
     expect(worker.terminate).not.toHaveBeenCalled();
   });
+
+  it('worker error イベントで peekFailed として resolve (add() ハング防止)', async () => {
+    const p = peekFile(worker, 'peek-err', new File([], 'x.mp4'));
+    worker.emitError('script load failed');
+    const result = await p;
+    expect(result).toEqual({ kind: 'peekFailed', error: 'script load failed' });
+  });
+
+  it('応答が来ない場合 timeout で peekFailed として resolve (add() ハング防止)', async () => {
+    vi.useFakeTimers();
+    try {
+      const p = peekFile(worker, 'peek-timeout', new File([], 'x.mp4'), 1_000);
+      vi.advanceTimersByTime(1_000);
+      const result = await p;
+      expect(result).toEqual({ kind: 'peekFailed', error: 'peek timeout (1000ms)' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('peeked 受信後の timeout は発火しない (timer 解除済み)', async () => {
+    vi.useFakeTimers();
+    try {
+      const p = peekFile(worker, 'peek-6', new File([], 'x.mp4'), 1_000);
+      worker.emit({ type: 'peeked', id: 'peek-6', meta: makePeekMeta() });
+      const result = await p;
+      expect(result.kind).toBe('peeked');
+      // timeout を進めても resolve 済みの結果は変わらない (二重 resolve しない)
+      vi.advanceTimersByTime(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

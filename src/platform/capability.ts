@@ -4,14 +4,41 @@ import { buildHevcCodecString, h264HighCodecString } from '../lib/presets';
 export const DEV_OVERRIDE_QUERY_PARAM = 'dev';
 export const DEV_OVERRIDE_VALUE = '1';
 
+// テスト用: import.meta.env の差し替え (vitest では DEV が常に true で
+// vi.stubEnv でも上書きできないため、本番ビルド相当の検証に使う)。
+let envOverrideForTest: Record<string, unknown> | null = null;
+
+/** テスト用: ビルド環境フラグを差し替える。null でリセット (実際の import.meta.env)。 */
+export function _setEnvForTest(env: Record<string, unknown> | null): void {
+  envOverrideForTest = env;
+}
+
+/**
+ * dev override をビルドとして許可するか。
+ * - dev サーバー (`npm run dev` / vitest): import.meta.env.DEV === true
+ * - E2E preview ビルド: `VITE_ALLOW_DEV_OVERRIDE=1 npm run build` で明示オプトイン
+ *   (playwright.preview.config.ts が使用)
+ * 本番ビルド (Cloudflare Pages の素の `npm run build`) ではどちらも満たさないため、
+ * `?dev=1` を付けても capability 強制や E2E 用 store 露出は発動しない。
+ */
+function devOverrideAllowedInBuild(): boolean {
+  const env =
+    envOverrideForTest ?? (import.meta as { env?: Record<string, unknown> }).env;
+  if (!env) return false;
+  return env.DEV === true || env.VITE_ALLOW_DEV_OVERRIDE === '1';
+}
+
 /**
  * `?dev=1` クエリで全 capability を true に強制。
  * macOS Safari や Chrome での開発確認用。
- * 本番では決して使わない（PWA の HTTPS チェックで誤魔化されないように、
  * dev override は capability の値だけを変更し、Service Worker や OPFS の
- * 実際の API 呼び出しはそのまま挙動する）。
+ * 実際の API 呼び出しはそのまま挙動する。
+ * 本番ビルドでは devOverrideAllowedInBuild() が false のため常に無効
+ * (旧実装はクエリのみで判定しており、本番 URL に ?dev=1 を付けると
+ * 非対応ブラウザでも canRun=true になり未定義 API 呼び出しでクラッシュし得た)。
  */
-function hasDevOverride(): boolean {
+export function isDevOverrideActive(): boolean {
+  if (!devOverrideAllowedInBuild()) return false;
   if (typeof window === 'undefined' || !window.location) return false;
   try {
     const params = new URLSearchParams(window.location.search);
@@ -50,7 +77,7 @@ async function probeVideoEncoder(codec: string): Promise<boolean> {
  * （HEVC は必須ではない、利用不可なら getAvailablePresets で H.264 のみに絞る）
  */
 export async function verifyEnvironment(): Promise<EnvCheck> {
-  if (hasDevOverride()) {
+  if (isDevOverrideActive()) {
     return {
       videoEncoder: true,
       audioEncoder: true,

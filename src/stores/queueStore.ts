@@ -174,6 +174,24 @@ function abortRunningJob(id: string): void {
   if (ac) ac.abort();
 }
 
+// ---- shareAllDone の in-flight ガード ----
+//
+// readFromOpfs が返す File は data を lazy 読込みするため、Share Sheet 表示中に
+// remove()/clearCompleted() が OPFS の実体を削除すると iOS Photos に空ファイルが渡る
+// (Adversarial review #4)。旧実装は全出力を arrayBuffer() でメモリにコピーして
+// 回避していたが、合計 1GB までメインスレッド RAM に展開され iPhone でクラッシュ
+// し得た。代わりに「share 実行中は OPFS 削除を待たせる」ガードに変更する。
+// Share Sheet はモーダルなので、削除操作が実際に待たされるのは異常系のみ。
+
+let shareAllInFlight: Promise<unknown> | null = null;
+
+/** share 実行中なら完了 (成功/失敗問わず) まで待つ。削除系 action の冒頭で呼ぶ。 */
+async function awaitShareInFlight(): Promise<void> {
+  if (shareAllInFlight) {
+    await shareAllInFlight.catch(() => {});
+  }
+}
+
 // ---- Store 型定義 ----
 
 export type QueueStoreState = {
@@ -358,7 +376,16 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       try {
         inputOpfsPath = await writeInputToOpfs(file, id);
       } catch (err) {
-        // peek が裏で走り続けるのは無害 (worker は persistent、結果は捨てられる)
+        // peek が裏で走り続けるのは無害 (worker は persistent、結果は捨てられる)。
+        // 既に書き込み済みのファイル (newItems) は IndexedDB / OPFS に永続化されて
+        // いるため、state に反映してから失敗を返す。反映しないと「リロードするまで
+        // UI に出ず処理もされない」オーファンになる。
+        if (newItems.length > 0) {
+          await withViewTransition(() => {
+            set((state) => ({ items: [...state.items, ...newItems] }));
+          });
+          get().processNext();
+        }
         return {
           ok: false,
           reason: 'opfs-write-failed',
@@ -407,6 +434,9 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     // (Worker は cancelled 応答後に terminate される。状態更新は items から削除されるので
     //  race で来る `cancelled` の patchItem は no-op になる。)
     abortRunningJob(id);
+
+    // shareAllDone 実行中なら OPFS 削除を share 完了まで待つ (空ファイル共有の防止)
+    await awaitShareInFlight();
 
     const item = get().items.find((i) => i.id === id);
     if (!item) return;
@@ -496,6 +526,9 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     // 連続発火すると前の transition が skip されて最後の 1 件だけ slide-out アニメ
     // になっていた。OPFS / IndexedDB 削除は transition 外で全件並列に実行し、
     // 最後に 1 つの View Transition で state を一括 filter する (全件並列 slide-out)。
+    // shareAllDone 実行中なら OPFS 削除を share 完了まで待つ (空ファイル共有の防止)
+    await awaitShareInFlight();
+
     const targets = get().items.filter(
       (i) => i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
     );
@@ -544,10 +577,9 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       return { kind: 'failed-multi', error: 'no done items' };
     }
 
-    // OPFS から並列に読み出し → arrayBuffer() で即時メモリに buffer して
-    // 後続の remove()/clearCompleted() による OPFS 削除レースを防ぐ
-    // (Adversarial review #4: readFromOpfs は File reference を返すだけで data は lazy
-    //  読込み、share() 中に remove() で消されると iOS Photos に空ファイルが行く)。
+    // OPFS から File reference を並列に取得する。data はメモリにコピーしない
+    // (File は lazy 読込み)。share 中の OPFS 削除レースは shareAllInFlight ガードで
+    // 防ぐ — remove()/clearCompleted() が share 完了まで削除を待つ。
     type ReadOk = { ok: true; blob: Blob; fileName: string };
     type ReadFail = { ok: false; error: string };
     const reads: Array<ReadOk | ReadFail> = await Promise.all(
@@ -557,12 +589,9 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
         }
         try {
           const file = await readFromOpfs(item.outputOpfsPath);
-          // 即時 arrayBuffer 読込みでメモリにコピー → これ以降 OPFS 削除されても OK
-          const buffer = await file.arrayBuffer();
-          const blob = new Blob([buffer], { type: file.type || 'video/mp4' });
           return {
             ok: true,
-            blob,
+            blob: file,
             fileName: deriveShareFileName(item.fileName),
           };
         } catch (err) {
@@ -581,10 +610,17 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       return { kind: 'failed-multi', error: `all reads failed: ${firstError}` };
     }
 
-    return shareFiles(
+    // share 実行中は削除系 action を待たせる (上の shareAllInFlight コメント参照)
+    const sharePromise = shareFiles(
       okReads.map((r) => r.blob),
       okReads.map((r) => r.fileName),
     );
+    shareAllInFlight = sharePromise;
+    try {
+      return await sharePromise;
+    } finally {
+      if (shareAllInFlight === sharePromise) shareAllInFlight = null;
+    }
   },
 
   processNext() {
@@ -682,13 +718,22 @@ async function runJob(
         void transition(set, get, item.id, { status: 'processing' });
       },
       onProgress: (percent, currentSec, totalSec, etaSec) => {
-        void transition(set, get, item.id, {
-          progress: percent,
-          currentSec,
-          etaSec,
-          // totalSec は item.durationSec として使う (Worker からの確定値)
-          durationSec: totalSec,
-        });
+        // ephemeral 更新: IndexedDB には書かない (persist: false)。
+        // progress / etaSec は再起動時にリセットされるため永続化する意味がなく、
+        // 200ms 間隔 × 並列数の IndexedDB write を避ける。
+        void transition(
+          set,
+          get,
+          item.id,
+          {
+            progress: percent,
+            currentSec,
+            etaSec,
+            // totalSec は item.durationSec として使う (Worker からの確定値)
+            durationSec: totalSec,
+          },
+          { persist: false },
+        );
       },
       signal: abortController.signal,
     });
@@ -750,12 +795,18 @@ async function transition(
   get: () => QueueStoreState & QueueStoreActions,
   id: string,
   patch: Partial<QueueItem>,
+  opts: { persist?: boolean } = {},
 ): Promise<void> {
   // items 内に id がまだ存在することを確認 (remove() で消えていれば no-op)
   const existing = get().items.find((i) => i.id === id);
   if (!existing) return;
 
   set((state) => ({ items: patchItem(state.items, id, patch) }));
+
+  // persist=false は ephemeral な更新 (progress 等) 用。
+  // 再起動時に processing → queued リセットで progress=0 に戻る仕様のため、
+  // 200ms ごとの進捗を IndexedDB に書くのは純粋に無駄な I/O になる。
+  if (opts.persist === false) return;
 
   // 永続化: 更新後の item を IndexedDB に save
   const updated = get().items.find((i) => i.id === id);
@@ -799,6 +850,7 @@ export type { Preset };
 export function _resetQueueStoreForTest(): void {
   for (const [, ac] of runningAbortControllers) ac.abort();
   runningAbortControllers.clear();
+  shareAllInFlight = null;
   _resetWorkerPoolForTest();
   useQueueStore.setState({
     items: [],

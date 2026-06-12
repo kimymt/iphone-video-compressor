@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { verifyEnvironment } from './capability';
+import { verifyEnvironment, _setEnvForTest } from './capability';
 
 // JSDOM には VideoEncoder/AudioEncoder/navigator.wakeLock/OPFS が存在しないため、
 // 各テストで `vi.stubGlobal` を使って必要な API を擬似する。
@@ -149,5 +149,30 @@ describe('verifyEnvironment', () => {
     setLocation('/?foo=bar&dev=1');
     const result = await verifyEnvironment();
     expect(result.canRun).toBe(true);
+  });
+
+  // vitest では import.meta.env.DEV が常に true (vi.stubEnv でも上書き不可) のため、
+  // _setEnvForTest で本番ビルド相当のフラグを注入して検証する。
+  it('本番ビルド相当 (DEV=false, VITE_ALLOW_DEV_OVERRIDE 無し) では ?dev=1 でも override しない', async () => {
+    setLocation('/?dev=1');
+    _setEnvForTest({ DEV: false });
+    vi.stubGlobal('navigator', {});
+    try {
+      const result = await verifyEnvironment();
+      expect(result.canRun).toBe(false);
+    } finally {
+      _setEnvForTest(null);
+    }
+  });
+
+  it('DEV=false でも VITE_ALLOW_DEV_OVERRIDE=1 なら override 有効 (E2E preview ビルド用)', async () => {
+    setLocation('/?dev=1');
+    _setEnvForTest({ DEV: false, VITE_ALLOW_DEV_OVERRIDE: '1' });
+    try {
+      const result = await verifyEnvironment();
+      expect(result.canRun).toBe(true);
+    } finally {
+      _setEnvForTest(null);
+    }
   });
 });

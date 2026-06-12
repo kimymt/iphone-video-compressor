@@ -177,6 +177,14 @@ export type PeekJobResult =
   | { kind: 'peekFailed'; error: string };
 
 /**
+ * peek の応答待ちタイムアウト (ms)。
+ * peek (demux のみ) は典型 100〜500ms。worker がスクリプトロード失敗や error で
+ * 死んで応答が永遠に来ない場合でも、このタイムアウトで peekFailed に倒れるため
+ * queueStore.add() の `await peekPromise` がハングしない。
+ */
+export const PEEK_TIMEOUT_MS = 10_000;
+
+/**
  * Worker に `peek` を発行して、metadata 取得結果を Promise で返す。
  *
  * 使用例 (queueStore.add 内):
@@ -192,33 +200,55 @@ export type PeekJobResult =
  *
  * 失敗は致命的でない (transcode 時に同じエラーで failed になる) ので、呼び出し側は
  * `peekFailed` を silent drop してよい。
+ *
+ * ハング防止 (V2.x bugfix): worker がスクリプトロード失敗などで error を出すと
+ * queueStore 側の error handler が terminate するため、応答 message は永遠に来ない。
+ * 旧実装は message しか監視しておらず Promise が未解決のまま残り、queueStore.add()
+ * の `await peekPromise` が永久ハング → FilePicker が busy のまま操作不能になった。
+ * error イベントとタイムアウトの両方で必ず settle する。
  */
-export function peekFile(worker: Worker, id: string, file: File): Promise<PeekJobResult> {
+export function peekFile(
+  worker: Worker,
+  id: string,
+  file: File,
+  timeoutMs: number = PEEK_TIMEOUT_MS,
+): Promise<PeekJobResult> {
   return new Promise<PeekJobResult>((resolve) => {
     let resolved = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (result: PeekJobResult): void => {
+      if (resolved) return;
+      resolved = true;
+      if (timer !== null) clearTimeout(timer);
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      resolve(result);
+    };
+
     const onMessage = (event: MessageEvent<WorkerResponse>): void => {
       const msg = event.data;
       // 他ジョブの message は無視 (worker は peek + transcode 両方を受ける可能性がある)
       if (msg.id !== id) return;
-      if (resolved) return;
 
       if (msg.type === 'peeked') {
-        resolved = true;
-        worker.removeEventListener('message', onMessage);
-        resolve({ kind: 'peeked', meta: msg.meta });
+        finish({ kind: 'peeked', meta: msg.meta });
       } else if (msg.type === 'peekFailed') {
-        resolved = true;
-        worker.removeEventListener('message', onMessage);
-        resolve({ kind: 'peekFailed', error: msg.error });
+        finish({ kind: 'peekFailed', error: msg.error });
       }
       // その他 (started / progress / done / failed / cancelled) は別ジョブ宛なので無視
     };
 
-    // peek の場合は error event を別途観察しない:
-    // worker 全体が error event を出すと runTranscodeJob 側でも捕捉される。
-    // peekFile は silent fallback で十分 (失敗時は transcode が同じエラーを出す)。
+    const onError = (event: ErrorEvent): void => {
+      finish({ kind: 'peekFailed', error: event.message || 'worker error' });
+    };
 
     worker.addEventListener('message', onMessage);
+    worker.addEventListener('error', onError);
+    timer = setTimeout(() => {
+      finish({ kind: 'peekFailed', error: `peek timeout (${timeoutMs}ms)` });
+    }, timeoutMs);
+
     const peekMsg: WorkerRequest = { type: 'peek', id, file };
     worker.postMessage(peekMsg);
   });

@@ -6,7 +6,7 @@ import QueueList from './components/QueueList';
 import SettingsSheet from './components/SettingsSheet';
 import ToastStack from './components/Toast';
 import WakeLockIndicator from './components/WakeLockIndicator';
-import { verifyEnvironment } from './platform/capability';
+import { verifyEnvironment, isDevOverrideActive } from './platform/capability';
 import { ensurePersistent } from './platform/storage';
 import { useQueueStore, type AddResult } from './stores/queueStore';
 import { useSettingsStore } from './stores/settingsStore';
@@ -32,6 +32,7 @@ export default function App() {
   const items = useQueueStore((s) => s.items);
   const init = useQueueStore((s) => s.init);
   const initialized = useQueueStore((s) => s.initialized);
+  const isProcessing = useQueueStore((s) => s.isProcessing);
 
   const settingsPreset = useSettingsStore((s) => s.preset);
   const settingsLanguage = useSettingsStore((s) => s.language);
@@ -108,13 +109,18 @@ export default function App() {
   // 条件:
   //   - envCheck.hevcEncode === true (非 HEVC 端末は不要)
   //   - settingsInitialized (hevcBench record が読み込まれている)
+  //   - キューが処理中でない (orchestrator が 'queue-busy' で skip。bench が
+  //     実 transcode と VideoToolbox を取り合うと計測が歪むため)
   //   - shouldRunBench(record) === true (未実行 or 90 日以上経過)
   //   - in-flight ロックが空 (orchestrator 内部で管理)
+  // isProcessing を deps に含めることで、起動時にキュー復元 → 自動再開で skip
+  // されても、処理完了 (isProcessing false) のタイミングで再評価される。
   // 失敗は console.warn のみで握り潰す (致命的でない、次回起動で再試行)。
   useEffect(() => {
     if (!envCheck?.canRun) return;
     if (!envCheck.hevcEncode) return;
     if (!settingsInitialized) return;
+    if (isProcessing) return;
     const result = maybeAutoRunHevcBench(
       { hevcEncode: envCheck.hevcEncode },
       settingsHevcBench,
@@ -124,20 +130,21 @@ export default function App() {
         // orchestrator が console.warn を出すので追加処理は不要
       });
     }
-    // settingsHevcBench の参照が変わった時のみ再評価 (= bench 完了で record 更新時)。
-    // それ以外は in-flight ロックで spam を防ぐ。
-  }, [envCheck, settingsInitialized, settingsHevcBench]);
+    // settingsHevcBench の参照が変わった時 (= bench 完了で record 更新時) と
+    // isProcessing の遷移時のみ再評価。それ以外は in-flight ロックで spam を防ぐ。
+  }, [envCheck, settingsInitialized, settingsHevcBench, isProcessing]);
 
   // dev mode (?dev=1) で E2E から store にアクセスできるよう window に露出。
   // __movieCompresserStore: 現在の state スナップショット (items / actions)。items 変更で再代入。
   // __movieCompresserSetState: zustand の setState 関数。Phase 4c E2E で terminal アイテムを
   // OPFS / IndexedDB を介さずに直接 seed するため (WebKit headless で OPFS が transient に
-  // 失敗するケースを回避)。dev でのみ露出するので本番には影響しない。
+  // 失敗するケースを回避)。
+  // isDevOverrideActive はクエリだけでなくビルドフラグ (DEV / VITE_ALLOW_DEV_OVERRIDE)
+  // も要求するため、本番ビルドでは ?dev=1 を付けても露出しない。
   useEffect(() => {
     if (!initialized) return;
     if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('dev') !== '1') return;
+    if (!isDevOverrideActive()) return;
     const w = window as unknown as Record<string, unknown>;
     w.__movieCompresserStore = useQueueStore.getState();
     w.__movieCompresserSetState = useQueueStore.setState;
