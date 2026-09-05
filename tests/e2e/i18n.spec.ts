@@ -127,14 +127,12 @@ test('英語モード: プリセット名も翻訳される', async ({ page }) =
 
 test('<html lang> が locale に追従', async ({ page }) => {
   // 初期は ja (ja-JP locale + auto preference)
-  let lang = await page.evaluate(() => document.documentElement.lang);
-  expect(lang).toBe('ja');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
 
   // English に切替後 → 'en'
   await page.getByTestId('open-settings').click();
   await page.getByTestId('settings-language-en').click();
-  lang = await page.evaluate(() => document.documentElement.lang);
-  expect(lang).toBe('en');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
 });
 
 test('言語ピッカーに 6 オプション (auto / ja / en / zh-CN / zh-TW / ko)', async ({ page }) => {

@@ -367,4 +367,46 @@ describe('peekFile — V2.x (A2) 投機的 demux', () => {
     await p;
     expect(worker.terminate).not.toHaveBeenCalled();
   });
+
+  it('Worker の error イベントでも peekFailed として resolve', async () => {
+    const p = peekFile(worker, 'peek-error', new File([], 'x.mp4'));
+
+    worker.emitError('worker crashed');
+
+    await expect(p).resolves.toEqual({ kind: 'peekFailed', error: 'worker crashed' });
+  });
+
+  it('Worker の messageerror イベントでも peekFailed として resolve', async () => {
+    const p = peekFile(worker, 'peek-message-error', new File([], 'x.mp4'));
+
+    worker.dispatchEvent(new MessageEvent('messageerror'));
+
+    await expect(p).resolves.toEqual({
+      kind: 'peekFailed',
+      error: 'worker message error',
+    });
+  });
+
+  it('postMessage が同期 throw しても peekFailed として resolve', async () => {
+    worker.postMessage.mockImplementationOnce(() => {
+      throw new DOMException('clone failed', 'DataCloneError');
+    });
+
+    const result = await peekFile(worker, 'peek-clone-error', new File([], 'x.mp4'));
+
+    expect(result).toEqual({ kind: 'peekFailed', error: 'clone failed' });
+  });
+
+  it('Worker が応答しなければタイムアウトして peekFailed として resolve', async () => {
+    vi.useFakeTimers();
+    try {
+      const p = peekFile(worker, 'peek-timeout', new File([], 'x.mp4'));
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(p).resolves.toEqual({ kind: 'peekFailed', error: 'peek timed out' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
