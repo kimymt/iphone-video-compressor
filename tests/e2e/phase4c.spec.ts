@@ -74,7 +74,8 @@ test.describe('Phase 4c retry / clearCompleted UI', () => {
     await expect(item.getByLabel(/再試行/)).toBeVisible();
     await expect(item.getByLabel(/削除/)).toBeVisible();
     await expect(item.getByLabel(/処理を中止/)).toHaveCount(0);
-    await expect(item).toContainText('mocked E2E failure');
+    // 内部エラー文字列は利用者向け文言へ置き換えて表示する。
+    await expect(item).toContainText('この動画は処理できませんでした');
   });
 
   test('cancelled item にも Retry + Remove ボタンが表示される', async ({ page }) => {

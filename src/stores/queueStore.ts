@@ -168,6 +168,7 @@ export function _resetWorkerPoolForTest(): void {
 // ---- 進行中ジョブの管理 (zustand state には乗せない、in-memory のみ) ----
 
 const runningAbortControllers = new Map<string, AbortController>();
+const removingItemIds = new Set<string>();
 
 function abortRunningJob(id: string): void {
   const ac = runningAbortControllers.get(id);
@@ -343,16 +344,24 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     // transition が skip されて最後の 1 件だけアニメする問題があった)。
     //
     // V2.x (A2): 各 file に対して peek (投機的 demux) を OPFS write と並列に発火する。
-    // peek 結果は durationSec を取得して初期 item に反映 → D2 で「予測 ~38MB」を表示。
-    // peek 失敗は silent drop (transcode 時に同じエラーで failed になる)。
+    // peek は推定サイズ表示のための任意処理なので、キュー追加を待たせない。
+    // 結果は item 追加後に非同期反映し、失敗は silent drop する。
     const addedIds: string[] = [];
     const newItems: QueueItem[] = [];
+    const peekJobs: Array<{ id: string; result: ReturnType<PeekFn> }> = [];
     const now = Date.now();
     for (const file of files) {
       const id = crypto.randomUUID();
-      // V2.x (A2): peek を OPFS write と並列で開始 (peek worker は共有 singleton)。
-      // try/catch 不要: peekFile は内部で peekFailed に変換して resolve する。
-      const peekPromise = peekFileImpl(getPeekWorker(), id, file);
+      // Worker 生成や postMessage の同期例外も peekFailed に正規化する。
+      // Promise.resolve().then() に包むことで OPFS write と並列に開始しつつ、add() 本体へ
+      // 例外を伝播させない。
+      const peekResult = Promise.resolve()
+        .then(() => peekFileImpl(getPeekWorker(), id, file))
+        .catch((error) => ({
+          kind: 'peekFailed' as const,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      peekJobs.push({ id, result: peekResult });
 
       let inputOpfsPath: string;
       try {
@@ -366,12 +375,6 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
         };
       }
 
-      // OPFS write 完了後に peek 結果を await。peek は典型 100〜500ms なので
-      // 大ファイルの OPFS write のほうが遅く、peek は既に終わっているケースが多い。
-      const peekResult = await peekPromise;
-      const durationSec =
-        peekResult.kind === 'peeked' ? peekResult.meta.durationSec : undefined;
-
       const item: QueueItem = {
         id,
         fileName: file.name,
@@ -381,9 +384,6 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
         preset,
         addedAt: now + addedIds.length,
         status: 'queued',
-        // V2.x (A2 + D2): peek 成功時に durationSec を初期セット → QueueItem が
-        // 「予測 ~38MB」を queued/starting 中から表示できる (transcode 開始を待たない)。
-        durationSec,
       };
       await saveQueueItem(item);
       addedIds.push(id);
@@ -394,6 +394,21 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     if (newItems.length > 0) {
       await withViewTransition(() => {
         set((state) => ({ items: [...state.items, ...newItems] }));
+      });
+    }
+
+    // item が state に入った後で peek 結果を反映する。Worker が応答しない・落ちる場合でも
+    // add() と transcode 開始はこの Promise を待たないため、UI は先へ進める。
+    for (const peek of peekJobs) {
+      void peek.result.then((result) => {
+        if (result.kind !== 'peeked') return;
+        const current = get().items.find((item) => item.id === peek.id);
+        // remove()/clearCompleted() の永続化削除中に put し直さない。
+        // また、progress/done が設定した確定値を投機的な値で上書きしない。
+        if (!current || removingItemIds.has(peek.id) || current.durationSec !== undefined) return;
+        void transition(set, get, peek.id, { durationSec: result.meta.durationSec }).catch(() => {
+          // 推定サイズの永続化失敗は圧縮処理を止めない。
+        });
       });
     }
 
@@ -410,18 +425,23 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
 
     const item = get().items.find((i) => i.id === id);
     if (!item) return;
-    if (item.inputOpfsPath) {
-      await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
+    removingItemIds.add(id);
+    try {
+      if (item.inputOpfsPath) {
+        await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
+      }
+      if (item.outputOpfsPath) {
+        await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
+      }
+      await deleteFromOpfs(outputPath(id)).catch(() => {});
+      await deleteQueueItem(id);
+      // V2: View Transitions API でリスト削除を smooth に。
+      await withViewTransition(() => {
+        set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
+      });
+    } finally {
+      removingItemIds.delete(id);
     }
-    if (item.outputOpfsPath) {
-      await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
-    }
-    await deleteFromOpfs(outputPath(id)).catch(() => {});
-    await deleteQueueItem(id);
-    // V2: View Transitions API でリスト削除を smooth に。
-    await withViewTransition(() => {
-      set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
-    });
   },
 
   async cancel(id) {
@@ -500,26 +520,31 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       (i) => i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
     );
     if (targets.length === 0) return;
-
-    // 永続化層の削除は parallel に。実行中ジョブには触らないので abort 経路は不要。
-    await Promise.all(
-      targets.map(async (item) => {
-        if (item.inputOpfsPath) {
-          await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
-        }
-        if (item.outputOpfsPath) {
-          await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
-        }
-        await deleteFromOpfs(outputPath(item.id)).catch(() => {});
-        await deleteQueueItem(item.id);
-      }),
-    );
-
-    // state 反映は 1 つの transition でまとめる
     const idsToRemove = new Set(targets.map((i) => i.id));
-    await withViewTransition(() => {
-      set((state) => ({ items: state.items.filter((i) => !idsToRemove.has(i.id)) }));
-    });
+    for (const id of idsToRemove) removingItemIds.add(id);
+
+    try {
+      // 永続化層の削除は parallel に。実行中ジョブには触らないので abort 経路は不要。
+      await Promise.all(
+        targets.map(async (item) => {
+          if (item.inputOpfsPath) {
+            await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
+          }
+          if (item.outputOpfsPath) {
+            await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
+          }
+          await deleteFromOpfs(outputPath(item.id)).catch(() => {});
+          await deleteQueueItem(item.id);
+        }),
+      );
+
+      // state 反映は 1 つの transition でまとめる
+      await withViewTransition(() => {
+        set((state) => ({ items: state.items.filter((i) => !idsToRemove.has(i.id)) }));
+      });
+    } finally {
+      for (const id of idsToRemove) removingItemIds.delete(id);
+    }
   },
 
   effectiveParallelism(preset) {

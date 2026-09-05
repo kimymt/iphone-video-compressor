@@ -11,7 +11,7 @@ import {
   _setWorkerImplsForTest,
   _resetWorkerImplsForTest,
 } from './queueStore';
-import { saveQueueItem, _resetDbCacheForTest } from '../db/indexeddb';
+import { loadAllQueueItems, saveQueueItem, _resetDbCacheForTest } from '../db/indexeddb';
 import {
   installMockOpfs,
   resetMockOpfs,
@@ -1092,7 +1092,7 @@ describe('queueStore', () => {
       mockEnv = new MockWorkerEnv();
     });
 
-    it('peek 成功で item.durationSec が初期セットされる (queued 状態で予測サイズ表示可能)', async () => {
+    it('peek 成功で item.durationSec が非同期セットされる (queued 状態で予測サイズ表示可能)', async () => {
       // peek が peeked を返すスタブを注入
       const peekStub = vi.fn(async () => ({
         kind: 'peeked' as const,
@@ -1110,6 +1110,7 @@ describe('queueStore', () => {
 
       const f1 = new File(['a'], 'a.mov');
       await useQueueStore.getState().add([f1], 'standard-hevc');
+      await flush();
 
       expect(peekStub).toHaveBeenCalledOnce();
       const items = useQueueStore.getState().items;
@@ -1133,6 +1134,152 @@ describe('queueStore', () => {
       expect(items[0]!.durationSec).toBeUndefined();
     });
 
+    it('peek が応答しなくても add と transcode 開始をブロックしない', async () => {
+      const peekStub = vi.fn(
+        () => new Promise<never>(() => {
+          // Worker が応答しない状態を再現する。
+        }),
+      );
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const addPromise = useQueueStore
+        .getState()
+        .add([new File(['a'], 'stalled-peek.mov')], 'standard-hevc');
+      const outcome = await Promise.race([
+        addPromise.then(() => 'added' as const),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 50)),
+      ]);
+
+      expect(outcome).toBe('added');
+      expect(useQueueStore.getState().items).toHaveLength(1);
+      expect(useQueueStore.getState().items[0]?.fileName).toBe('stalled-peek.mov');
+      await flush();
+      expect(mockEnv.jobs).toHaveLength(1);
+    });
+
+    it('add 完了後に届いた peek 結果で durationSec を更新する', async () => {
+      let resolvePeek!: (result: {
+        kind: 'peeked';
+        meta: {
+          durationSec: number;
+          rotation: 0;
+          width: number;
+          height: number;
+          fps: number;
+          isHdr: boolean;
+        };
+      }) => void;
+      const peekStub = vi.fn(
+        () =>
+          new Promise<{
+            kind: 'peeked';
+            meta: {
+              durationSec: number;
+              rotation: 0;
+              width: number;
+              height: number;
+              fps: number;
+              isHdr: boolean;
+            };
+          }>((resolve) => {
+            resolvePeek = resolve;
+          }),
+      );
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const result = await useQueueStore
+        .getState()
+        .add([new File(['a'], 'late-meta.mov')], 'standard-hevc');
+      expect(result.ok).toBe(true);
+      expect(useQueueStore.getState().items[0]?.durationSec).toBeUndefined();
+
+      resolvePeek({
+        kind: 'peeked',
+        meta: {
+          durationSec: 73,
+          rotation: 0,
+          width: 1920,
+          height: 1080,
+          fps: 30,
+          isHdr: false,
+        },
+      });
+      await flush();
+
+      expect(useQueueStore.getState().items[0]?.durationSec).toBe(73);
+    });
+
+    it('圧縮側の確定 durationSec を遅延 peek で上書きしない', async () => {
+      let resolvePeek!: (result: {
+        kind: 'peeked';
+        meta: { durationSec: number; rotation: 0; width: number; height: number; fps: number; isHdr: boolean };
+      }) => void;
+      const peekStub = vi.fn(
+        () =>
+          new Promise<{
+            kind: 'peeked';
+            meta: { durationSec: number; rotation: 0; width: number; height: number; fps: number; isHdr: boolean };
+          }>((resolve) => {
+            resolvePeek = resolve;
+          }),
+      );
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const result = await useQueueStore
+        .getState()
+        .add([new File(['a'], 'authoritative-duration.mov')], 'standard-hevc');
+      if (!result.ok) throw new Error('add failed');
+      await flush();
+      mockEnv.succeed(result.addedIds[0]!, { durationSec: 99 });
+      await flush();
+
+      resolvePeek({
+        kind: 'peeked',
+        meta: { durationSec: 73, rotation: 0, width: 1920, height: 1080, fps: 30, isHdr: false },
+      });
+      await flush();
+
+      expect(useQueueStore.getState().items[0]?.durationSec).toBe(99);
+    });
+
+    it('remove 中の遅延 peek で削除済み item を IndexedDB に復活させない', async () => {
+      let resolvePeek!: (result: {
+        kind: 'peeked';
+        meta: { durationSec: number; rotation: 0; width: number; height: number; fps: number; isHdr: boolean };
+      }) => void;
+      const peekStub = vi.fn(
+        () =>
+          new Promise<{
+            kind: 'peeked';
+            meta: { durationSec: number; rotation: 0; width: number; height: number; fps: number; isHdr: boolean };
+          }>((resolve) => {
+            resolvePeek = resolve;
+          }),
+      );
+      _setWorkerImplsForTest(mockEnv.spawn, mockEnv.run, peekStub);
+      await useQueueStore.getState().init();
+
+      const result = await useQueueStore
+        .getState()
+        .add([new File(['a'], 'remove-race.mov')], 'standard-hevc');
+      if (!result.ok) throw new Error('add failed');
+      await flush();
+
+      const removePromise = useQueueStore.getState().remove(result.addedIds[0]!);
+      resolvePeek({
+        kind: 'peeked',
+        meta: { durationSec: 73, rotation: 0, width: 1920, height: 1080, fps: 30, isHdr: false },
+      });
+      await removePromise;
+      await flush();
+
+      expect(useQueueStore.getState().items).toHaveLength(0);
+      expect(await loadAllQueueItems()).toHaveLength(0);
+    });
+
     it('複数ファイル投入で各 file に peek が発火される', async () => {
       const peekStub = vi.fn(async () => ({
         kind: 'peeked' as const,
@@ -1152,6 +1299,7 @@ describe('queueStore', () => {
       const f2 = new File(['b'], 'b.mov');
       const f3 = new File(['c'], 'c.mov');
       await useQueueStore.getState().add([f1, f2, f3], 'standard-hevc');
+      await flush();
 
       expect(peekStub).toHaveBeenCalledTimes(3);
       const items = useQueueStore.getState().items;
