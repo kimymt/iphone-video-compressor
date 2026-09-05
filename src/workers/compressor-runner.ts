@@ -118,9 +118,10 @@ export class JobRunner {
     // cold-start UX: started を即 post (CLAUDE.md ハマりどころ 18)
     this.env.post({ type: 'started', id: msg.id });
 
+    let outputWritable: FileSystemWritableFileStream | undefined;
     try {
       const inputFile = await this.env.readInput(msg.inputPath);
-      const outputWritable = await this.env.openOutput(msg.outputPath);
+      outputWritable = await this.env.openOutput(msg.outputPath);
 
       const result = await this.env.runTranscode(inputFile, outputWritable, {
         preset: msg.preset,
@@ -153,6 +154,15 @@ export class JobRunner {
         durationSec: result.durationSec,
       });
     } catch (e) {
+      // demux など muxer 作成前の失敗でも、ファイルのロックを解放してから
+      // terminal を送る。メイン側はその応答を待って中途出力を削除する。
+      if (outputWritable) {
+        try {
+          await outputWritable.abort();
+        } catch {
+          // 既に close/abort 済みの場合もある。削除可否はメイン側で確認する。
+        }
+      }
       if (this.terminalSent) return;
       this.terminalSent = true;
       if (e instanceof TranscodeCancelledError) {

@@ -15,6 +15,8 @@
 // - failed: AlertTriangle (error) + エラーメッセージ + Retry + Remove
 // - cancelled: XCircle (secondary) + テキスト + Retry + Remove
 
+import { useState } from 'react';
+import { useToastStore } from '../stores/toastStore';
 import {
   Clock,
   Loader,
@@ -139,14 +141,27 @@ export default function QueueItemRow({ item }: QueueItemProps) {
   const retry = useQueueStore((s) => s.retry);
   const t = useT();
   const statusLabel = useStatusLabel();
+  const [removing, setRemoving] = useState(false);
+  const deleting = removing || (item.deletionPending && !item.cleanupFailed);
+  const handleRemove = async (): Promise<void> => {
+    if (deleting) return;
+    setRemoving(true);
+    try {
+      await remove(item.id);
+    } catch {
+      useToastStore.getState().show(t('queueItem.deletionFailed'), { kind: 'error' });
+    } finally {
+      setRemoving(false);
+    }
+  };
 
-  const showCancelBtn = item.status === 'queued' || item.status === 'starting' || item.status === 'processing';
+  const showCancelBtn = !item.deletionPending && (item.status === 'queued' || item.status === 'starting' || item.status === 'processing');
   // Retry は failed / cancelled で表示。done は input 削除済みなので表示しない (Phase 4a 仕様)。
-  const showRetryBtn = item.status === 'failed' || item.status === 'cancelled';
+  const showRetryBtn = !item.deletionPending && (item.status === 'failed' || item.status === 'cancelled');
   // 防御: 不整合状態 (failed なのに input が空) では disable で残す
   const retryDisabled = !item.inputOpfsPath;
   // Share は done かつ outputOpfsPath があるときのみ。
-  const showShareBtn = item.status === 'done' && !!item.outputOpfsPath;
+  const showShareBtn = !item.deletionPending && item.status === 'done' && !!item.outputOpfsPath;
   const showRemoveBtn = !showCancelBtn || item.status === 'queued';
 
   const aria = t('queueItem.aria', {
@@ -174,7 +189,7 @@ export default function QueueItemRow({ item }: QueueItemProps) {
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{item.fileName}</p>
           <p className="tabular text-xs text-[var(--label-secondary)]">
-            {renderSubText(item, t, statusLabel)}
+            {deleting ? t('queueItem.deleting') : renderSubText(item, t, statusLabel)}
           </p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-1">
@@ -217,8 +232,10 @@ export default function QueueItemRow({ item }: QueueItemProps) {
             <button
               type="button"
               onClick={() => {
-                void remove(item.id);
+                void handleRemove();
               }}
+              disabled={!!deleting}
+              aria-busy={deleting || undefined}
               className="ml-1 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded-full text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               aria-label={t('queueItem.removeAria', { fileName: item.fileName })}
             >
@@ -227,7 +244,11 @@ export default function QueueItemRow({ item }: QueueItemProps) {
           )}
         </div>
       </div>
-
+      {item.cleanupFailed && (
+        <p role="alert" className="text-sm text-[var(--error)]">
+          {t('queueItem.deletionFailed')}
+        </p>
+      )}
     </li>
   );
 }

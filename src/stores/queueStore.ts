@@ -18,7 +18,7 @@ import {
 } from '../platform/share';
 import {
   loadAllQueueItems,
-  saveQueueItem,
+  saveQueueItem as writeQueueItem,
   deleteQueueItem,
   getSetting,
   setSetting,
@@ -169,6 +169,30 @@ export function _resetWorkerPoolForTest(): void {
 
 const runningAbortControllers = new Map<string, AbortController>();
 const removingItemIds = new Set<string>();
+const runningJobs = new Map<string, Promise<void>>();
+const removalTasks = new Map<string, Promise<void>>();
+const pendingSaves = new Map<string, Promise<void>>();
+
+// 遅れて完了した進捗保存が、削除済みのレコードを復活させないよう順序を固定する。
+function saveQueueItem(item: QueueItem): Promise<void> {
+  const saved = (pendingSaves.get(item.id) ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => writeQueueItem(item));
+  pendingSaves.set(item.id, saved);
+  void saved.finally(() => {
+    if (pendingSaves.get(item.id) === saved) pendingSaves.delete(item.id);
+  }).catch(() => {});
+  return saved;
+}
+
+async function tryDeleteFromOpfs(path: string): Promise<boolean> {
+  try {
+    await deleteFromOpfs(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function abortRunningJob(id: string): void {
   const ac = runningAbortControllers.get(id);
@@ -272,16 +296,15 @@ function patchItem(
 async function resetInProgressItems(items: QueueItem[]): Promise<QueueItem[]> {
   const resetItems: QueueItem[] = [];
   for (const item of items) {
-    if (item.status === 'processing' || item.status === 'starting') {
-      if (item.outputOpfsPath) {
-        await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
-      }
+    if (!item.deletionPending && (item.status === 'processing' || item.status === 'starting')) {
+      const cleaned = await tryDeleteFromOpfs(item.outputOpfsPath || outputPath(item.id));
       const reset: QueueItem = {
         ...item,
         status: 'queued',
         progress: 0,
         startedAt: undefined,
-        outputOpfsPath: undefined,
+        outputOpfsPath: cleaned ? undefined : item.outputOpfsPath || outputPath(item.id),
+        cleanupFailed: !cleaned,
         outputSize: undefined,
       };
       resetItems.push(reset);
@@ -322,7 +345,18 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     } catch {
       /* prewarm 失敗は無視。後続の acquire で lazy spawn される。 */
     }
-    // 復元後に queued が残っていれば自動再開
+    // 前回途中で止まった削除は圧縮として再開しない。失敗時は行を残す。
+    await Promise.allSettled(items.filter((i) => i.deletionPending).map((i) => get().remove(i.id)));
+    // 圧縮済みの元動画の清掃も、パスを保持したまま再試行する。
+    for (const item of get().items) {
+      if (item.status === 'done' && item.inputOpfsPath && !item.deletionPending) {
+        const cleaned = await tryDeleteFromOpfs(item.inputOpfsPath);
+        await transition(set, get, item.id, {
+          inputOpfsPath: cleaned ? '' : item.inputOpfsPath,
+          cleanupFailed: !cleaned,
+        });
+      }
+    }
     get().processNext();
   },
 
@@ -418,30 +452,11 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
   },
 
   async remove(id) {
-    // 実行中なら abort して Worker 側 cancelled を待たずに先に進む
-    // (Worker は cancelled 応答後に terminate される。状態更新は items から削除されるので
-    //  race で来る `cancelled` の patchItem は no-op になる。)
-    abortRunningJob(id);
-
-    const item = get().items.find((i) => i.id === id);
-    if (!item) return;
-    removingItemIds.add(id);
-    try {
-      if (item.inputOpfsPath) {
-        await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
-      }
-      if (item.outputOpfsPath) {
-        await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
-      }
-      await deleteFromOpfs(outputPath(id)).catch(() => {});
-      await deleteQueueItem(id);
-      // V2: View Transitions API でリスト削除を smooth に。
-      await withViewTransition(() => {
-        set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
-      });
-    } finally {
-      removingItemIds.delete(id);
-    }
+    await deleteItemData(id, set, get);
+    await withViewTransition(() => {
+      set((state) => ({ items: state.items.filter((i) => i.id !== id) }));
+    });
+    get().processNext();
   },
 
   async cancel(id) {
@@ -468,11 +483,19 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
   async retry(id) {
     const item = get().items.find((i) => i.id === id);
     if (!item) return;
+    if (item.deletionPending || removingItemIds.has(id)) return;
     if (item.status !== 'failed' && item.status !== 'cancelled') return;
     if (!item.inputOpfsPath) {
       // done 遷移で input 削除済みの状態。UI 側で disabled の想定だが防御。
       return;
     }
+
+    if (!(await tryDeleteFromOpfs(outputPath(id)))) {
+      await transition(set, get, id, { cleanupFailed: true });
+      return;
+    }
+    const current = get().items.find((i) => i.id === id);
+    if (!current || current.deletionPending || removingItemIds.has(id)) return;
 
     // failed variant の `error` を切り離し queued に戻す。
     // discriminated union を維持するため明示的に新しいオブジェクトを構築する。
@@ -500,51 +523,31 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     // 追加して viewTransitionName を bump すれば slide-out + slide-in が走るが、
     // iOS native の retry UX に合わせて subtle morph のままにしている。
     await withViewTransition(() => {
+      const current = get().items.find((i) => i.id === id);
+      if (!current || current.deletionPending || removingItemIds.has(id)) return;
       set((state) => ({
         items: state.items.map((i) => (i.id === id ? retried : i)),
       }));
     });
-    await saveQueueItem(retried).catch(() => {});
-    // 中途出力が残っていれば削除 (cancelled は runJob 側で削除しているはずだが defensive)
-    await deleteFromOpfs(outputPath(id)).catch(() => {});
+    const updated = get().items.find((i) => i.id === id);
+    if (!updated || updated.deletionPending || removingItemIds.has(id)) return;
+    await saveQueueItem(updated).catch(() => {});
 
     get().processNext();
   },
 
   async clearCompleted() {
-    // M1: 旧実装は remove() を順次呼んでいたが、remove() 内の withViewTransition が
-    // 連続発火すると前の transition が skip されて最後の 1 件だけ slide-out アニメ
-    // になっていた。OPFS / IndexedDB 削除は transition 外で全件並列に実行し、
-    // 最後に 1 つの View Transition で state を一括 filter する (全件並列 slide-out)。
     const targets = get().items.filter(
-      (i) => i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
+      (i) => i.deletionPending || i.status === 'done' || i.status === 'failed' || i.status === 'cancelled',
     );
     if (targets.length === 0) return;
-    const idsToRemove = new Set(targets.map((i) => i.id));
-    for (const id of idsToRemove) removingItemIds.add(id);
-
-    try {
-      // 永続化層の削除は parallel に。実行中ジョブには触らないので abort 経路は不要。
-      await Promise.all(
-        targets.map(async (item) => {
-          if (item.inputOpfsPath) {
-            await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
-          }
-          if (item.outputOpfsPath) {
-            await deleteFromOpfs(item.outputOpfsPath).catch(() => {});
-          }
-          await deleteFromOpfs(outputPath(item.id)).catch(() => {});
-          await deleteQueueItem(item.id);
-        }),
-      );
-
-      // state 反映は 1 つの transition でまとめる
-      await withViewTransition(() => {
-        set((state) => ({ items: state.items.filter((i) => !idsToRemove.has(i.id)) }));
-      });
-    } finally {
-      for (const id of idsToRemove) removingItemIds.delete(id);
-    }
+    const results = await Promise.allSettled(targets.map((i) => deleteItemData(i.id, set, get)));
+    const removed = new Set(targets.filter((_, i) => results[i]?.status === 'fulfilled').map((i) => i.id));
+    // 一部が失敗しても成功した項目は除去し、失敗した行だけを再試行可能にする。
+    await withViewTransition(() => {
+      set((state) => ({ items: state.items.filter((i) => !removed.has(i.id)) }));
+    });
+    if (results.some((r) => r.status === 'rejected')) throw new Error('Video deletion failed');
   },
 
   effectiveParallelism(preset) {
@@ -564,7 +567,7 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
   },
 
   async shareAllDone() {
-    const dones = get().items.filter((i) => i.status === 'done');
+    const dones = get().items.filter((i) => i.status === 'done' && !i.deletionPending);
     if (dones.length === 0) {
       return { kind: 'failed-multi', error: 'no done items' };
     }
@@ -615,11 +618,12 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
   processNext() {
     const state = get();
     const running = state.items.filter(
-      (i) => i.status === 'starting' || i.status === 'processing',
+      (i) => (i.status === 'starting' || i.status === 'processing') &&
+        (!i.deletionPending || runningAbortControllers.has(i.id)),
     ).length;
 
     const queued = state.items
-      .filter((i) => i.status === 'queued')
+      .filter((i) => i.status === 'queued' && !i.deletionPending && !removingItemIds.has(i.id))
       .sort((a, b) => a.addedAt - b.addedAt);
 
     if (queued.length === 0) {
@@ -653,10 +657,68 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
 
     set({ isProcessing: true });
     for (const item of toStart) {
-      void runJob(set, get, item);
+      const job = runJob(set, get, item);
+      runningJobs.set(item.id, job);
+      void job.finally(() => {
+        if (runningJobs.get(item.id) === job) runningJobs.delete(item.id);
+      }).catch(() => {});
     }
   },
 }));
+
+/** OPFS の削除成功を確認するまでは、削除要求と全パスを IndexedDB に残す。 */
+function deleteItemData(
+  id: string,
+  set: typeof useQueueStore.setState,
+  get: typeof useQueueStore.getState,
+): Promise<void> {
+  const active = removalTasks.get(id);
+  if (active) return active;
+  const original = get().items.find((i) => i.id === id);
+  if (!original) return Promise.resolve();
+  removingItemIds.add(id);
+  // 同期でマークして新しいジョブ・進捗・peek・共有を止める。
+  set((state) => ({ items: patchItem(state.items, id, { deletionPending: true, cleanupFailed: false }) }));
+  abortRunningJob(id);
+  const task = (async () => {
+    try {
+      const pending = get().items.find((i) => i.id === id)!;
+      // この保存に失敗した場合はファイルを消さない。
+      await saveQueueItem(pending);
+      const running = runningJobs.get(id);
+      if (running) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            running,
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(() => reject(new Error('Video is still in use')), 10_000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+      // 既に走り始めた保存処理もすべて完了させる。
+      await pendingSaves.get(id);
+      const paths = new Set([original.inputOpfsPath, original.outputOpfsPath, outputPath(id)]);
+      for (const path of paths) if (path) await deleteFromOpfs(path);
+      await deleteQueueItem(id);
+    } catch (error) {
+      set((state) => ({ items: patchItem(state.items, id, { cleanupFailed: true }) }));
+      const retained = get().items.find((i) => i.id === id);
+      if (retained) await saveQueueItem(retained).catch(() => {});
+      throw error;
+    } finally {
+      removingItemIds.delete(id);
+    }
+  })();
+  removalTasks.set(id, task);
+  void task.finally(() => {
+    if (removalTasks.get(id) === task) removalTasks.delete(id);
+  }).catch(() => {});
+  return task;
+}
 
 // ---- 1 ジョブ実行 (store 外関数、closure で set/get を受け取る) ----
 
@@ -684,7 +746,8 @@ async function runJob(
 
   // 防御: transition の async 中に state が remove / reset で消えていれば spawn しない。
   // テスト間の leftover runJob が次の mockEnv で spawn を発火する race を防ぐ意味もある。
-  if (!get().items.find((i) => i.id === item.id)) return;
+  const current = get().items.find((i) => i.id === item.id);
+  if (!current || current.deletionPending || removingItemIds.has(item.id)) return;
 
   // V2.x (A1): persistent pool から worker を 1 つ acquire。
   // pool が空なら lazy spawn、parallelism 上限を超えた場合は新規 spawn (processNext 側で
@@ -718,9 +781,11 @@ async function runJob(
       signal: abortController.signal,
     });
 
+    if (removingItemIds.has(item.id) || get().items.find((i) => i.id === item.id)?.deletionPending) return;
+
     if (result.kind === 'done') {
       // done 遷移: input OPFS 削除 (CLAUDE.md ハマりどころ 20)
-      await deleteFromOpfs(item.inputOpfsPath).catch(() => {});
+      const cleaned = await tryDeleteFromOpfs(item.inputOpfsPath);
       await transition(set, get, item.id, {
         status: 'done',
         outputOpfsPath: outPath,
@@ -729,28 +794,34 @@ async function runJob(
         finishedAt: Date.now(),
         progress: 100,
         // input 削除済みの目印 (UI 側で retry をグレーアウトする判定に使う)
-        inputOpfsPath: '',
+        inputOpfsPath: cleaned ? '' : item.inputOpfsPath,
+        cleanupFailed: !cleaned,
         // terminal で ephemeral フィールドをクリア
         etaSec: undefined,
         currentSec: undefined,
       });
     } else if (result.kind === 'cancelled') {
       // 中途出力を削除
-      await deleteFromOpfs(outPath).catch(() => {});
+      const cleaned = await tryDeleteFromOpfs(outPath);
       await transition(set, get, item.id, {
         status: 'cancelled',
+        cleanupFailed: !cleaned,
+        outputOpfsPath: cleaned ? undefined : outPath,
         finishedAt: Date.now(),
         etaSec: undefined,
         currentSec: undefined,
       });
     } else {
       // failed
-      await deleteFromOpfs(outPath).catch(() => {});
+      const cleaned = await tryDeleteFromOpfs(outPath);
+      await transition(set, get, item.id, { cleanupFailed: !cleaned, outputOpfsPath: cleaned ? undefined : outPath });
       await markFailed(set, get, item.id, result.error);
     }
   } catch (err) {
     // runTranscodeJob 自体が throw した場合 (基本的には resolve するが防御)
-    await deleteFromOpfs(outPath).catch(() => {});
+    if (get().items.find((i) => i.id === item.id)?.deletionPending) return;
+    const cleaned = await tryDeleteFromOpfs(outPath);
+    await transition(set, get, item.id, { cleanupFailed: !cleaned, outputOpfsPath: cleaned ? undefined : outPath });
     await markFailed(
       set,
       get,
@@ -778,7 +849,7 @@ async function transition(
 ): Promise<void> {
   // items 内に id がまだ存在することを確認 (remove() で消えていれば no-op)
   const existing = get().items.find((i) => i.id === id);
-  if (!existing) return;
+  if (!existing || existing.deletionPending || removingItemIds.has(id)) return;
 
   set((state) => ({ items: patchItem(state.items, id, patch) }));
 
@@ -803,7 +874,7 @@ async function markFailed(
 ): Promise<void> {
   // failed variant は error フィールド必須なので discriminated union を満たすよう組み立て
   const existing = get().items.find((i) => i.id === id);
-  if (!existing) return;
+  if (!existing || existing.deletionPending || removingItemIds.has(id)) return;
   const failedItem: QueueItem = {
     ...existing,
     status: 'failed',
@@ -824,6 +895,10 @@ export type { Preset };
 export function _resetQueueStoreForTest(): void {
   for (const [, ac] of runningAbortControllers) ac.abort();
   runningAbortControllers.clear();
+  runningJobs.clear();
+  removalTasks.clear();
+  removingItemIds.clear();
+  pendingSaves.clear();
   _resetWorkerPoolForTest();
   useQueueStore.setState({
     items: [],

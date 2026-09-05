@@ -40,6 +40,8 @@ export const zhCN: Messages = {
   },
 
   queueItem: {
+    deleting: '正在删除…',
+    deletionFailed: '未能删除视频数据，数据可能仍保留在此设备上。请点击删除按钮重试。',
     aria: '{fileName}、{status}、进度 {percent}%',
     cancelAria: '取消 {fileName} 的处理',
     retryAria: '重试 {fileName}',

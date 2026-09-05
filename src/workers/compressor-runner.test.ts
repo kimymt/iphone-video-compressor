@@ -37,7 +37,7 @@ function makeEnv(): {
     readInput: vi.fn().mockResolvedValue(new File([new Uint8Array(10)], 'in.mp4')),
     openOutput: vi
       .fn()
-      .mockResolvedValue({} as FileSystemWritableFileStream),
+      .mockResolvedValue({ abort: vi.fn().mockResolvedValue(undefined) } as unknown as FileSystemWritableFileStream),
     runTranscode: (i, o, opts) => transcodeFn(i, o, opts),
     // V2.x (A2): handlePeek 用 demux スタブ。デフォルトでは未呼び出し、
     // peek テストケースで vi.fn() に差し替える。
@@ -407,4 +407,23 @@ describe('JobRunner — V2.x (A2) handlePeek', () => {
     if (msg.type !== 'peekFailed') throw new Error('expected peekFailed');
     expect(msg.error).toBe('plain string error');
   });
+});
+
+
+describe('JobRunner — 削除前のファイル解放', () => {
+  it.each([new Error('demux failed'), new TranscodeCancelledError()])(
+    'エラー／キャンセルの応答は出力 abort の完了を待つ (%s)', async (error) => {
+      const { env, posted, setTranscodeBehavior } = makeEnv();
+      let release!: () => void;
+      const abort = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+      vi.mocked(env.openOutput).mockResolvedValue({ abort } as unknown as FileSystemWritableFileStream);
+      setTranscodeBehavior(async () => { throw error; });
+      const run = new JobRunner(env).handle(transcodeMsg());
+      await vi.waitFor(() => expect(abort).toHaveBeenCalledOnce());
+      expect(posted.map((m) => m.type)).toEqual(['started']);
+      release();
+      await run;
+      expect(posted.at(-1)?.type).toBe(error instanceof TranscodeCancelledError ? 'cancelled' : 'failed');
+    },
+  );
 });
