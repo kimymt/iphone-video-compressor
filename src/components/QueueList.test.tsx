@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import QueueList from './QueueList';
 import { useQueueStore } from '../stores/queueStore';
+import { useToastStore } from '../stores/toastStore';
 import type { QueueItem } from '../lib/types';
 
 function makeItem(id: string, status: QueueItem['status'], addedAt: number): QueueItem {
@@ -137,14 +138,14 @@ describe('QueueList — 完了をすべて削除ボタン (Phase 4c)', () => {
     expect(screen.getByTestId('clear-completed')).toHaveTextContent('完了をすべて削除 (3)');
   });
 
-  it('ボタンタップで queueStore.clearCompleted() が呼ばれる', () => {
+  it('ボタンタップで queueStore.clearCompleted() が呼ばれる', async () => {
     const spy = vi.spyOn(useQueueStore.getState(), 'clearCompleted');
     render(
       <QueueList
         items={[makeItem('d', 'done', 1), makeItem('q', 'queued', 2)]}
       />,
     );
-    fireEvent.click(screen.getByTestId('clear-completed'));
+    await act(async () => { fireEvent.click(screen.getByTestId('clear-completed')); });
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
@@ -231,4 +232,14 @@ describe('QueueList — V2: 完了をすべて保存ボタン', () => {
     const cmp = saveBtn.compareDocumentPosition(clearBtn);
     expect(cmp & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+});
+
+
+it('一括削除の失敗を通知し、再試行できる', async () => {
+  vi.spyOn(useQueueStore.getState(), 'clearCompleted').mockRejectedValueOnce(new Error('locked'));
+  const toast = vi.spyOn(useToastStore.getState(), 'show');
+  render(<QueueList items={[makeItem('locked', 'cancelled', 1)]} />);
+  await act(async () => { fireEvent.click(screen.getByTestId('clear-completed')); });
+  expect(toast).toHaveBeenCalledWith(expect.stringContaining('端末内に残っている可能性'), { kind: 'error' });
+  expect(screen.getByTestId('clear-completed')).toBeEnabled();
 });

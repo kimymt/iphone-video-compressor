@@ -40,6 +40,8 @@ export const zhTW: Messages = {
   },
 
   queueItem: {
+    deleting: '正在刪除…',
+    deletionFailed: '無法刪除影片資料，資料可能仍保留在此裝置上。請按刪除按鈕重試。',
     aria: '{fileName}、{status}、進度 {percent}%',
     cancelAria: '取消 {fileName} 的處理',
     retryAria: '重試 {fileName}',

@@ -39,6 +39,8 @@ export const ko: Messages = {
   },
 
   queueItem: {
+    deleting: '삭제 중…',
+    deletionFailed: '동영상 데이터를 삭제하지 못했습니다. 기기에 남아 있을 수 있습니다. 삭제 버튼으로 다시 시도해 주세요.',
     aria: '{fileName}, {status}, 진행률 {percent}%',
     cancelAria: '{fileName} 처리 취소',
     retryAria: '{fileName} 재시도',

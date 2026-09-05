@@ -40,6 +40,8 @@ export const en: Messages = {
   },
 
   queueItem: {
+    deleting: 'Deleting…',
+    deletionFailed: 'Some video data could not be deleted and may remain on this device. Use Delete to try again.',
     aria: '{fileName}, {status}, {percent}% complete',
     cancelAria: 'Cancel processing for {fileName}',
     retryAria: 'Retry {fileName}',

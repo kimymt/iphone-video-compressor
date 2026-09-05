@@ -41,6 +41,8 @@ export const ja = {
   },
 
   queueItem: {
+    deleting: '削除中…',
+    deletionFailed: '動画データを削除できませんでした。端末内に残っている可能性があります。削除ボタンで再試行してください。',
     aria: '{fileName}、{status}、進捗 {percent}%',
     cancelAria: '{fileName} の処理を中止',
     retryAria: '{fileName} を再試行',

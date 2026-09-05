@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   writeInputToOpfs,
   readFromOpfs,
@@ -67,6 +67,18 @@ describe('opfs.ts', () => {
 
     it('存在しないファイルでも例外を投げない', async () => {
       await expect(deleteFromOpfs('inputs/missing.mov')).resolves.toBeUndefined();
+      expect(getMockRoot().countEntries()).toBe(0);
+    });
+
+    it('ファイルロック等の削除失敗を呼び出し元に返し、実体を残す', async () => {
+      const path = await writeInputToOpfs(new File(['private'], 'a.mov'), 'locked');
+      const dir = await getMockRoot().getDirectoryHandle('inputs');
+      const error = new DOMException('locked', 'NoModificationAllowedError');
+      vi.spyOn(dir, 'removeEntry').mockRejectedValueOnce(error);
+      await expect(deleteFromOpfs(path)).rejects.toBe(error);
+      expect(await fileToText(await readFromOpfs(path))).toBe('private');
+      await deleteFromOpfs(path);
+      await expect(readFromOpfs(path)).rejects.toThrow();
     });
 
     it('不正パスは例外', async () => {

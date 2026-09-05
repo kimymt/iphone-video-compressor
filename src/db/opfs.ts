@@ -64,12 +64,13 @@ export async function readFromOpfs(path: string): Promise<File> {
 export async function deleteFromOpfs(path: string): Promise<void> {
   try {
     const [dirName, fileName] = splitPath(path);
-    const dir = await getSubDir(dirName);
+    const root = await getRootDir();
+    const dir = await root.getDirectoryHandle(dirName);
     await dir.removeEntry(fileName);
   } catch (err) {
     if (err instanceof DOMException && err.name === 'NotFoundError') return;
-    // 不正パスは投げ、その他は黙る。
-    if (err instanceof Error && err.message.startsWith('不正な OPFS パス')) throw err;
+    // 削除失敗を成功扱いすると、参照だけ消えて動画が残る。
+    throw err;
   }
 }
 

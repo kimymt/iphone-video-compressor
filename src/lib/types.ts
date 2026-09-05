@@ -29,7 +29,11 @@ type QueueItemBase = {
   id: string; // UUID
   fileName: string;
   inputSize: number;
-  inputOpfsPath: string; // status='done' 遷移時に削除（その後は空文字）
+  inputOpfsPath: string; // 元動画の削除に成功した後だけ空文字
+  /** 削除要求を永続化。部分削除後も再圧縮せず、削除を再試行する。 */
+  deletionPending?: boolean;
+  /** 元動画または中途出力の清掃失敗。パスを保持してユーザーに知らせる。 */
+  cleanupFailed?: boolean;
   outputOpfsPath?: string;
   outputSize?: number;
   durationSec?: number;

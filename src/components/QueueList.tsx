@@ -29,6 +29,18 @@ export default function QueueList({ items }: QueueListProps) {
   const sorted = [...items].sort((a, b) => a.addedAt - b.addedAt);
   /** V2: 一括保存中フラグ。連打防止 + ボタン disable。 */
   const [savingAll, setSavingAll] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
+  const handleClearAll = async (): Promise<void> => {
+    if (clearingAll) return;
+    setClearingAll(true);
+    try {
+      await clearCompleted();
+    } catch {
+      useToastStore.getState().show(t('queueItem.deletionFailed'), { kind: 'error' });
+    } finally {
+      setClearingAll(false);
+    }
+  };
 
   const handleSaveAll = async (): Promise<void> => {
     if (savingAll) return;
@@ -74,8 +86,8 @@ export default function QueueList({ items }: QueueListProps) {
     );
   }
 
-  const terminalCount = sorted.filter((i) => TERMINAL_STATUSES.includes(i.status)).length;
-  const doneCount = sorted.filter((i) => i.status === 'done').length;
+  const terminalCount = sorted.filter((i) => i.deletionPending || TERMINAL_STATUSES.includes(i.status)).length;
+  const doneCount = sorted.filter((i) => i.status === 'done' && !i.deletionPending).length;
 
   return (
     <div className="flex flex-col">
@@ -103,8 +115,10 @@ export default function QueueList({ items }: QueueListProps) {
             <button
               type="button"
               onClick={() => {
-                void clearCompleted();
+                void handleClearAll();
               }}
+              disabled={clearingAll}
+              aria-busy={clearingAll || undefined}
               data-testid="clear-completed"
               className="flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-sm text-[var(--label-secondary)] hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
               aria-label={t('queueList.clearAllAria', { count: terminalCount })}

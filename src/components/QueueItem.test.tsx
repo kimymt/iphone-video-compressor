@@ -4,7 +4,7 @@
 // ShareButton.test.tsx で別途検証。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 
 // QueueItem は ShareButton を内部 import するが、ShareButton は ../db/opfs と
 // ../platform/share に依存する。QueueItem テストでは Share ボタンを click しないので
@@ -18,6 +18,7 @@ vi.mock('../platform/share', () => ({
 
 import QueueItemRow from './QueueItem';
 import { useQueueStore } from '../stores/queueStore';
+import { useToastStore } from '../stores/toastStore';
 import type { QueueItem } from '../lib/types';
 
 function makeItem(status: QueueItem['status'], overrides: Partial<QueueItem> = {}): QueueItem {
@@ -139,19 +140,19 @@ describe('QueueItem — アクション', () => {
     expect(cancelSpy).toHaveBeenCalledWith('item-1');
   });
 
-  it('Remove ボタンタップで queueStore.remove(id) を呼ぶ', () => {
+  it('Remove ボタンタップで queueStore.remove(id) を呼ぶ', async () => {
     const removeSpy = vi.spyOn(useQueueStore.getState(), 'remove');
     render(<QueueItemRow item={makeItem('done', { outputSize: 100 })} />);
-    fireEvent.click(screen.getByLabelText(/削除/));
+    await act(async () => { fireEvent.click(screen.getByLabelText(/削除/)); });
     expect(removeSpy).toHaveBeenCalledWith('item-1');
   });
 
-  it('queued の Cancel と Remove はどちらも有効', () => {
+  it('queued の Cancel と Remove はどちらも有効', async () => {
     const cancelSpy = vi.spyOn(useQueueStore.getState(), 'cancel');
     const removeSpy = vi.spyOn(useQueueStore.getState(), 'remove');
     render(<QueueItemRow item={makeItem('queued')} />);
     fireEvent.click(screen.getByLabelText(/処理を中止/));
-    fireEvent.click(screen.getByLabelText(/削除/));
+    await act(async () => { fireEvent.click(screen.getByLabelText(/削除/)); });
     expect(cancelSpy).toHaveBeenCalledWith('item-1');
     expect(removeSpy).toHaveBeenCalledWith('item-1');
   });
@@ -374,5 +375,27 @@ describe('QueueItem — V2.x (D2) 推定出力サイズ', () => {
     );
     expect(screen.getByText(/キュー待ち/)).toBeInTheDocument();
     expect(screen.queryByText(/約.*MB/)).toBeNull();
+  });
+});
+
+
+describe('QueueItem — 削除失敗', () => {
+  it('削除の拒否を通知し、ボタンを再度押せる', async () => {
+    const remove = vi.spyOn(useQueueStore.getState(), 'remove').mockRejectedValueOnce(new Error('locked'));
+    const toast = vi.spyOn(useToastStore.getState(), 'show');
+    render(<QueueItemRow item={makeItem('cancelled')} />);
+    await act(async () => { fireEvent.click(screen.getByLabelText(/削除/)); });
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining('端末内に残っている可能性'), { kind: 'error' });
+    expect(screen.getByLabelText(/削除/)).toBeEnabled();
+    await act(async () => { fireEvent.click(screen.getByLabelText(/削除/)); });
+    expect(remove).toHaveBeenCalledTimes(2);
+  });
+
+  it('途中の削除は警告と削除の再試行を表示し、共有・再圧縮は表示しない', () => {
+    render(<QueueItemRow item={makeItem('done', { deletionPending: true, cleanupFailed: true, outputOpfsPath: 'outputs/item-1.mp4' })} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('削除ボタンで再試行');
+    expect(screen.getByLabelText(/削除/)).toBeEnabled();
+    expect(screen.queryByTestId('share-button')).toBeNull();
+    expect(screen.queryByLabelText(/再試行/)).toBeNull();
   });
 });

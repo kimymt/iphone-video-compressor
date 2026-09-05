@@ -17,7 +17,7 @@ import {
   resetMockOpfs,
   getMockRoot,
 } from '../../tests/helpers/mock-opfs';
-import { getOpfsWritable } from '../db/opfs';
+import { getOpfsWritable, readFromOpfs } from '../db/opfs';
 import type { QueueItem } from '../lib/types';
 import type {
   TranscodeJobOptions,
@@ -494,6 +494,120 @@ describe('queueStore', () => {
     it('存在しない id の remove は no-op', async () => {
       await expect(useQueueStore.getState().remove('missing-id')).resolves.toBeUndefined();
       expect(useQueueStore.getState().items).toHaveLength(0);
+    });
+  });
+
+  describe('削除失敗からの復旧', () => {
+    async function createFile(path: string): Promise<void> {
+      const writable = await getOpfsWritable(path);
+      await writable.write('private video');
+      await writable.close();
+    }
+
+    it('削除失敗でも実体と管理情報を残し、次の削除で消せる', async () => {
+      await saveQueueItem(makeItem('private', 'done', { inputOpfsPath: '', outputOpfsPath: 'outputs/private.mp4' }));
+      await createFile('outputs/private.mp4');
+      await useQueueStore.getState().init();
+      const dir = await getMockRoot().getDirectoryHandle('outputs');
+      vi.spyOn(dir, 'removeEntry').mockRejectedValueOnce(new DOMException('locked', 'NoModificationAllowedError'));
+
+      await expect(useQueueStore.getState().remove('private')).rejects.toThrow('locked');
+      expect(await readFromOpfs('outputs/private.mp4')).toHaveProperty('size', 13);
+      expect(useQueueStore.getState().items[0]).toMatchObject({ deletionPending: true, cleanupFailed: true });
+      expect((await loadAllQueueItems())[0]).toMatchObject({ deletionPending: true, outputOpfsPath: 'outputs/private.mp4' });
+
+      await useQueueStore.getState().remove('private');
+      expect(useQueueStore.getState().items).toEqual([]);
+      expect(await loadAllQueueItems()).toEqual([]);
+      await expect(readFromOpfs('outputs/private.mp4')).rejects.toThrow();
+    });
+
+    it('一括削除は成功した行だけ消し、部分削除された行は再圧縮せず保持する', async () => {
+      for (const id of ['good', 'locked']) {
+        await saveQueueItem(makeItem(id, 'cancelled', { outputOpfsPath: `outputs/${id}.mp4` }));
+        await createFile(`inputs/${id}.mov`);
+        await createFile(`outputs/${id}.mp4`);
+      }
+      await useQueueStore.getState().init();
+      const dir = await getMockRoot().getDirectoryHandle('outputs');
+      const remove = dir.removeEntry.bind(dir);
+      vi.spyOn(dir, 'removeEntry').mockImplementation(async (name) => {
+        if (name === 'locked.mp4') throw new DOMException('locked', 'NoModificationAllowedError');
+        await remove(name);
+      });
+      await expect(useQueueStore.getState().clearCompleted()).rejects.toThrow();
+      expect(useQueueStore.getState().items.map((i) => i.id)).toEqual(['locked']);
+      expect((await loadAllQueueItems()).map((i) => i.id)).toEqual(['locked']);
+      await expect(readFromOpfs('inputs/locked.mov')).rejects.toThrow();
+      expect(await readFromOpfs('outputs/locked.mp4')).toHaveProperty('size', 13);
+      await useQueueStore.getState().retry('locked');
+      expect(mockEnv.jobs).toHaveLength(0);
+      vi.restoreAllMocks();
+      await useQueueStore.getState().clearCompleted();
+      expect(await loadAllQueueItems()).toEqual([]);
+    });
+
+    it('再起動時に途中の削除を再試行し、圧縮として再開しない', async () => {
+      await saveQueueItem(makeItem('interrupted', 'processing', { deletionPending: true }));
+      await createFile('inputs/interrupted.mov');
+      await createFile('outputs/interrupted.mp4');
+      await useQueueStore.getState().init();
+      expect(mockEnv.jobs).toHaveLength(0);
+      expect(await loadAllQueueItems()).toEqual([]);
+      await expect(readFromOpfs('inputs/interrupted.mov')).rejects.toThrow();
+      await expect(readFromOpfs('outputs/interrupted.mp4')).rejects.toThrow();
+    });
+
+    it('起動時の削除が再び失敗しても行を保持し、別の動画の処理を妨げない', async () => {
+      await saveQueueItem(makeItem('locked', 'processing', { deletionPending: true }));
+      await createFile('inputs/locked.mov');
+      const dir = await getMockRoot().getDirectoryHandle('inputs');
+      vi.spyOn(dir, 'removeEntry').mockRejectedValueOnce(new Error('locked'));
+      await useQueueStore.getState().init();
+      expect(useQueueStore.getState().items[0]).toMatchObject({ cleanupFailed: true, deletionPending: true });
+      await useQueueStore.getState().add([new File(['new'], 'new.mov')], 'standard-hevc');
+      await flush();
+      expect(mockEnv.jobs).toHaveLength(1);
+      expect(mockEnv.jobs[0]?.options.id).not.toBe('locked');
+    });
+
+    it('圧縮成功時の元動画削除に失敗したらパスを保持し、再起動で清掃する', async () => {
+      await useQueueStore.getState().init();
+      const add = await useQueueStore.getState().add([new File(['private'], 'a.mov')], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      await flush();
+      const id = add.addedIds[0]!;
+      const dir = await getMockRoot().getDirectoryHandle('inputs');
+      vi.spyOn(dir, 'removeEntry').mockRejectedValueOnce(new Error('locked'));
+      mockEnv.succeed(id);
+      await flush();
+      expect(useQueueStore.getState().items[0]).toMatchObject({ status: 'done', cleanupFailed: true, inputOpfsPath: `inputs/${id}.mov` });
+      expect((await loadAllQueueItems())[0]?.inputOpfsPath).toBe(`inputs/${id}.mov`);
+      expect(await readFromOpfs(`inputs/${id}.mov`)).toHaveProperty('size', 7);
+      _resetQueueStoreForTest();
+      await useQueueStore.getState().init();
+      expect(useQueueStore.getState().items[0]).toMatchObject({ status: 'done', inputOpfsPath: '', cleanupFailed: false });
+      await expect(readFromOpfs(`inputs/${id}.mov`)).rejects.toThrow();
+    });
+
+    it('Worker終了前には消さず、遅い進捗保存や出力書込みの後に削除する', async () => {
+      await useQueueStore.getState().init();
+      const add = await useQueueStore.getState().add([new File(['private'], 'a.mov')], 'standard-hevc');
+      if (!add.ok) throw new Error('add failed');
+      await flush();
+      const id = add.addedIds[0]!;
+      mockEnv.emitProgress(id, 20);
+      const removing = useQueueStore.getState().remove(id);
+      await flush();
+      expect(mockEnv.jobs[0]?.signalAborted()).toBe(true);
+      expect(await readFromOpfs(`inputs/${id}.mov`)).toHaveProperty('size', 7);
+      await createFile(`outputs/${id}.mp4`);
+      mockEnv.emitProgress(id, 50);
+      mockEnv.cancel(id);
+      await removing;
+      await flush();
+      expect(await loadAllQueueItems()).toEqual([]);
+      await expect(readFromOpfs(`outputs/${id}.mp4`)).rejects.toThrow();
     });
   });
 
@@ -1273,6 +1387,7 @@ describe('queueStore', () => {
         kind: 'peeked',
         meta: { durationSec: 73, rotation: 0, width: 1920, height: 1080, fps: 30, isHdr: false },
       });
+      mockEnv.cancel(result.addedIds[0]!);
       await removePromise;
       await flush();
 

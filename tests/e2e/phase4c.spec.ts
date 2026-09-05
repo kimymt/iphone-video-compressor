@@ -27,14 +27,25 @@ type SeededItem = {
 
 async function preparePage(page: Page): Promise<void> {
   await page.goto('/?dev=1');
-  await page.evaluate(() => {
-    indexedDB.deleteDatabase('movie-compresser');
-  });
-  await page.reload();
+  // Playwright は各テストに独立したストレージを用意する。
+  // アプリが開いた DB を削除すると、削除要求の永続化まで失敗してしまう。
   await page.waitForFunction(
-    () => (window as unknown as { __movieCompresserSetState?: unknown }).__movieCompresserSetState !== undefined,
+    () => (window as unknown as { __movieCompresserStore?: { initialized: boolean } })
+      .__movieCompresserStore?.initialized === true,
+    undefined,
     { timeout: 5_000 },
   );
+  // このスイートはメタ情報だけを seed する UI テスト。動画実体は存在しない。
+  // WebKit headless の UnknownError に依存せず、空の OPFS の NotFound を再現する。
+  // 実ファイルの削除は deletion.spec.ts (Chromium) で別途検証する。
+  await page.evaluate(() => {
+    Object.defineProperty(Object.getPrototypeOf(navigator.storage), 'getDirectory', {
+      configurable: true,
+      value: async () => ({
+        getDirectoryHandle: async () => { throw new DOMException('not found', 'NotFoundError'); },
+      }),
+    });
+  });
 }
 
 async function seedItems(page: Page, items: SeededItem[]): Promise<void> {
