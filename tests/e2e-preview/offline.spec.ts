@@ -13,7 +13,6 @@ test.describe('Phase 6 offline (preview build)', () => {
   test('SW 登録 → controller セット → オフラインで index.html がキャッシュから返る', async ({
     page,
     context,
-    request,
   }) => {
     await page.goto('/?dev=1');
 
@@ -28,16 +27,26 @@ test.describe('Phase 6 offline (preview build)', () => {
     );
 
     await context.setOffline(true);
+    const uncachedFailed = await page.evaluate(async () => {
+      try { await fetch('/offline-network-probe.txt', { cache: 'no-store' }); return false; }
+      catch { return true; }
+    });
+    expect(uncachedFailed).toBe(true);
 
-    // SW が NavigationRoute で index.html を返すこと。
-    // page.reload() は WebKit + Playwright の組み合わせで offline 時に internal error
-    // を出す既知の制限があるため、HTTP リクエストレベルで検証する。
-    const res = await request.get('/', { failOnStatusCode: false });
-    expect(res.status()).toBe(200);
-    const html = await res.text();
+    // APIRequestContext is not affected by context.setOffline(). Fetch from the
+    // controlled browser page so this really exercises offline Service Worker routing.
+    const res = await page.evaluate(async () => {
+      const response = await fetch('/index.html');
+      return { status: response.status, html: await response.text() };
+    });
+    expect(res.status).toBe(200);
+    const html = res.html;
     // V2.x: title は「動画圧縮 — iOS 26+ 専用」(iOS 26+ シグナル付き)
     expect(html).toMatch(/<title>動画圧縮 — iOS 26\+ 専用<\/title>/);
     expect(html).toMatch(/id="root"/);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: '動画圧縮', level: 1 })).toBeVisible();
+    await expect(page.getByText('まだ何もありません')).toBeVisible();
 
     await context.setOffline(false);
   });
@@ -45,7 +54,6 @@ test.describe('Phase 6 offline (preview build)', () => {
   test('manifest.webmanifest もオフラインで配信される (precache 範囲確認)', async ({
     page,
     context,
-    request,
   }) => {
     await page.goto('/');
     await page.evaluate(async () => {
@@ -58,9 +66,17 @@ test.describe('Phase 6 offline (preview build)', () => {
     );
 
     await context.setOffline(true);
-    const res = await request.get('/manifest.webmanifest', { failOnStatusCode: false });
-    expect(res.status()).toBe(200);
-    const m = (await res.json()) as { name: string };
+    const uncachedFailed = await page.evaluate(async () => {
+      try { await fetch('/offline-network-probe.txt', { cache: 'no-store' }); return false; }
+      catch { return true; }
+    });
+    expect(uncachedFailed).toBe(true);
+    const res = await page.evaluate(async () => {
+      const response = await fetch('/manifest.webmanifest');
+      return { status: response.status, manifest: await response.json() };
+    });
+    expect(res.status).toBe(200);
+    const m = res.manifest as { name: string };
     expect(m.name).toBe('動画圧縮');
     await context.setOffline(false);
   });

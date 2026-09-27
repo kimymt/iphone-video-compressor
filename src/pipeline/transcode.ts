@@ -20,7 +20,7 @@ import {
   type AudioCodec,
   type VideoCodec,
 } from 'mediabunny';
-import { isBt2020Primaries } from '../lib/color-space';
+import { needsSdrConversion } from '../lib/color-space';
 import { buildCodecString, MAX_INFLIGHT_FRAMES } from '../lib/presets';
 import { applyRotation } from './rotate';
 import { convertToBt709 } from './colorConvert';
@@ -284,7 +284,7 @@ async function runVideoPipeline(
 ): Promise<void> {
   const inflightCap = MAX_INFLIGHT_FRAMES[opts.preset.codec];
   const encoderConfig = makeVideoEncoderConfig(opts.preset, outputDims, dem.fps);
-  const needsHdrConvert = isBt2020Primaries(dem.colorSpace);
+  const needsColorConvert = needsSdrConversion(dem.colorSpace);
   const needsRotate = dem.rotation !== 0;
   // 回転後の dimensions (rotate canvas 用)
   const rotW = dem.rotation === 90 || dem.rotation === 270 ? dem.height : dem.width;
@@ -292,8 +292,8 @@ async function runVideoPipeline(
   const needsResize = outputDims.width !== rotW || outputDims.height !== rotH;
 
   // 用途別 canvas (再利用)。HDR/rotate/resize それぞれサイズが違うので別個に作る。
-  const colorCanvas = needsHdrConvert ? new OffscreenCanvas(dem.width, dem.height) : null;
-  const colorCtx = colorCanvas?.getContext('2d', { colorSpace: 'srgb' }) ?? null;
+  let colorCanvas = needsColorConvert ? new OffscreenCanvas(dem.width, dem.height) : null;
+  let colorCtx = colorCanvas?.getContext('2d', { colorSpace: 'srgb' }) ?? null;
   const rotateCanvas = needsRotate ? new OffscreenCanvas(rotW, rotH) : null;
   const rotateCtx = rotateCanvas?.getContext('2d', { colorSpace: 'srgb' }) ?? null;
   const resizeCanvas = needsResize
@@ -356,7 +356,15 @@ async function runVideoPipeline(
       }
 
       // 1. HDR → SDR (BT.2020 → BT.709)
-      if (needsHdrConvert && colorCtx) {
+      if (needsColorConvert || needsSdrConversion(frame.colorSpace)) {
+        if (!colorCtx) {
+          colorCanvas = new OffscreenCanvas(frame.codedWidth, frame.codedHeight);
+          colorCtx = colorCanvas.getContext('2d', { colorSpace: 'srgb' });
+        }
+        if (!colorCtx) {
+          frame.close();
+          throw new TranscodeError('SDR conversion canvas unavailable');
+        }
         frame = convertToBt709(frame, dem.colorSpace, colorCtx);
       }
 
@@ -405,7 +413,7 @@ async function runVideoPipeline(
     await encoder.flush();
     if (encoderError) throw new TranscodeError('encoder error during flush', encoderError);
   } finally {
-    encoder.close();
+    if (encoder.state !== 'closed') encoder.close();
   }
 
   // mediabunny への add は output callback で非同期に投入したので、ここで全て await
@@ -473,7 +481,7 @@ async function runAudioPipeline(
       throw new TranscodeError('audio encoder error during flush', encoderError);
     }
   } finally {
-    encoder.close();
+    if (encoder.state !== 'closed') encoder.close();
   }
 
   await Promise.all(pendingAdds);

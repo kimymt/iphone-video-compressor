@@ -1,0 +1,65 @@
+{
+  "rows": [
+    {
+      "mode": "baseline",
+      "elapsedMs": 7.299999952316284,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "stream",
+      "elapsedMs": 29.899999976158142,
+      "maxTimerDelayMs": 9.399999976158142,
+      "bytes": 8388608
+    },
+    {
+      "mode": "stream",
+      "elapsedMs": 13.200000047683716,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "baseline",
+      "elapsedMs": 6.100000023841858,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "baseline",
+      "elapsedMs": 5.899999976158142,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "stream",
+      "elapsedMs": 13.200000047683716,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "stream",
+      "elapsedMs": 13.100000023841858,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "baseline",
+      "elapsedMs": 6.100000023841858,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "baseline",
+      "elapsedMs": 6,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    },
+    {
+      "mode": "stream",
+      "elapsedMs": 13.300000071525574,
+      "maxTimerDelayMs": 0,
+      "bytes": 8388608
+    }
+  ],
+  "note": "Memory unavailable is not zero. Timer delay is a responsiveness proxy. Hash verification is in automated tests, outside benchmark timing."
+}

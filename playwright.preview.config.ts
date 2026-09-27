@@ -19,8 +19,13 @@ export default defineConfig({
     locale: 'ja-JP',
   },
   projects: [
+    { name: 'chromium-preview', testMatch: '**/offline.spec.ts', use: { ...devices['Desktop Chrome'], locale: 'ja-JP' } },
     {
       name: 'webkit-iphone-preview',
+      // This WebKit build fails browser fetch under offline emulation even
+      // with populated caches. Verify stored assets separately; actual offline
+      // delivery is exercised by Chromium and remains an iOS device check.
+      testMatch: '**/cache.spec.ts',
       use: {
         ...devices['iPhone 15'],
         locale: 'ja-JP',

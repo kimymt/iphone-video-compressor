@@ -206,3 +206,22 @@ describe('convertToBt709', () => {
     expect(ctx.drawImage).not.toHaveBeenCalled();
   });
 });
+
+describe('decoded color and failure ownership', () => {
+  it('converts an HDR frame even when container color is missing', () => {
+    const frame = { ...makeMockFrame(), colorSpace: BT2020_HLG };
+    const ctx = makeMockCtx(1920, 1080);
+    convertToBt709(frame as unknown as VideoFrame, {}, ctx as unknown as OffscreenCanvasRenderingContext2D);
+    expect(ctx.drawImage).toHaveBeenCalledOnce();
+    expect(frame.close).toHaveBeenCalledOnce();
+  });
+  it('releases the frame and restores canvas after conversion failure', () => {
+    const frame = makeMockFrame();
+    const ctx = makeMockCtx(1920, 1080);
+    ctx.drawImage.mockImplementation(() => { throw new Error('canvas failure'); });
+    expect(() => convertToBt709(frame as unknown as VideoFrame, BT2020_HLG,
+      ctx as unknown as OffscreenCanvasRenderingContext2D)).toThrow('canvas failure');
+    expect(ctx.restore).toHaveBeenCalledOnce();
+    expect(frame.close).toHaveBeenCalledOnce();
+  });
+});

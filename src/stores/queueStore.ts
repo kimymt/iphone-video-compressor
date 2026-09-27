@@ -384,6 +384,7 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
     const newItems: QueueItem[] = [];
     const peekJobs: Array<{ id: string; result: ReturnType<PeekFn> }> = [];
     const now = Date.now();
+    let writeError: string | null = null;
     for (const file of files) {
       const id = crypto.randomUUID();
       // Worker 生成や postMessage の同期例外も peekFailed に正規化する。
@@ -401,12 +402,10 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
       try {
         inputOpfsPath = await writeInputToOpfs(file, id);
       } catch (err) {
-        // peek が裏で走り続けるのは無害 (worker は persistent、結果は捨てられる)
-        return {
-          ok: false,
-          reason: 'opfs-write-failed',
-          error: err instanceof Error ? err.message : String(err),
-        };
+        // Earlier files are already durable. Publish and process those before
+        // reporting this failure; otherwise they stay invisible until reload.
+        writeError = err instanceof Error ? err.message : String(err);
+        break;
       }
 
       const item: QueueItem = {
@@ -448,6 +447,9 @@ export const useQueueStore = create<QueueStoreState & QueueStoreActions>((set, g
 
     // 追加直後に処理を起動
     get().processNext();
+    if (writeError !== null) {
+      return { ok: false, reason: 'opfs-write-failed', error: writeError };
+    }
     return { ok: true, addedIds };
   },
 
