@@ -12,7 +12,7 @@ import {
 } from 'mediabunny';
 // VideoColorSpaceInit は WebCodecs の DOM 組み込み型 (lib.dom.d.ts) を直接参照する。
 // mediabunny v1.45 では型再 export されていないため。
-import { isBt2020Primaries } from '../lib/color-space';
+import { isHdrTransfer } from '../lib/color-space';
 
 // pipeline 内部から参照しやすい別名
 export type VideoTrack = InputVideoTrack;
@@ -38,8 +38,7 @@ export type DemuxResult = {
   /** coded height (回転前)。 */
   readonly height: number;
   /**
-   * 動画トラックの色空間。`primaries === 'bt2020'` のとき HDR、
-   * colorConvert で BT.709 へトーンマッピング必要 (CLAUDE.md ハマりどころ 10)。
+   * 動画トラックの色空間。PQ/HLGのHDR判定と広色域の変換判定は独立。
    */
   readonly colorSpace: VideoColorSpaceInit;
   /**
@@ -127,16 +126,16 @@ export async function demuxInput(file: Blob): Promise<DemuxResult> {
 
 /**
  * 入力動画が HDR (BT.2020 PQ or HLG) かを判定する。
- * `colorConvert.convertToBt709` のパススルー条件に使う。
+ * メタデータ表示用。色域変換の要否にはneedsSdrConversionを使う。
  *
  * iPhone 12 以降の HDR 録画は `primaries === 'bt2020'`、transfer は 'pq' or 'hlg'。
- * primaries だけで判定すれば十分 (CLAUDE.md ハマりどころ 10)。
+ * HDRはPQ/HLGの伝達特性から判定する。
  *
  * 実装は `src/lib/color-space.ts` に委譲 (lib.dom.d.ts の VideoColorPrimaries が
  * 'bt2020' を含まないため、文字列比較に下げて評価する)。
  */
 export function isHdrColorSpace(colorSpace: VideoColorSpaceInit): boolean {
-  return isBt2020Primaries(colorSpace);
+  return isHdrTransfer(colorSpace);
 }
 
 /**

@@ -1,0 +1,81 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Safari/537.36",
+  "input": {
+    "frames": 60,
+    "reversed": 0,
+    "duplicates": 0,
+    "firstTimestampUs": 0,
+    "lastTimestampUs": 1966666,
+    "containerColor": {
+      "primaries": "bt709",
+      "transfer": "bt709",
+      "matrix": "bt709",
+      "fullRange": false
+    },
+    "decoderColor": {
+      "primaries": "bt709",
+      "transfer": "bt709",
+      "matrix": "bt709",
+      "fullRange": false
+    },
+    "decodedColors": [
+      {
+        "fullRange": false,
+        "matrix": "bt709",
+        "primaries": "bt709",
+        "transfer": "bt709"
+      }
+    ],
+    "durationSec": 2,
+    "rotation": 0,
+    "videoRange": {
+      "startSec": 0,
+      "endSec": 2
+    },
+    "audioRange": {
+      "startSec": -0.021333333333333333,
+      "endSec": 2
+    },
+    "elapsedMs": 4.5
+  },
+  "output": {
+    "frames": 60,
+    "reversed": 0,
+    "duplicates": 0,
+    "firstTimestampUs": 33333,
+    "lastTimestampUs": 2000000,
+    "containerColor": {
+      "primaries": "bt709",
+      "transfer": "bt709",
+      "matrix": "bt709",
+      "fullRange": false
+    },
+    "decoderColor": {
+      "primaries": "bt709",
+      "transfer": "bt709",
+      "matrix": "bt709",
+      "fullRange": false
+    },
+    "decodedColors": [
+      {
+        "fullRange": false,
+        "matrix": "bt709",
+        "primaries": "bt709",
+        "transfer": "bt709"
+      }
+    ],
+    "durationSec": 2.033333333333333,
+    "rotation": 0,
+    "videoRange": {
+      "startSec": 0.03333333333333333,
+      "endSec": 2.033333333333333
+    },
+    "audioRange": {
+      "startSec": 0,
+      "endSec": 2.021333333333333
+    },
+    "elapsedMs": 1.899999976158142
+  },
+  "frameCountEqual": true,
+  "note": "Frame counts/timestamps do not prove visual order or color accuracy. Inspect numbered frames and gradients on the device."
+}

@@ -427,6 +427,21 @@ describe('queueStore', () => {
       expect(mockEnv.jobs.length).toBe(0);
     });
 
+    it('途中の取り込み失敗でも保存済みの動画を表示して処理する', async () => {
+      const inputs = await getMockRoot().getDirectoryHandle('inputs', { create: true });
+      const original = inputs.getFileHandle.bind(inputs);
+      vi.spyOn(inputs, 'getFileHandle')
+        .mockImplementationOnce(original)
+        .mockRejectedValueOnce(new Error('second import failed'));
+      const result = await useQueueStore.getState().add([
+        new File(['first'], 'first.mov'), new File(['second'], 'second.mov'),
+      ], 'standard-hevc');
+      expect(result.ok).toBe(false);
+      await flush();
+      expect(useQueueStore.getState().items.map(item => item.fileName)).toEqual(['first.mov']);
+      expect(mockEnv.jobs).toHaveLength(1);
+    });
+
     it('OPFS 書き込み失敗 → ok:false / reason: opfs-write-failed', async () => {
       const nav = (globalThis as unknown as { navigator: { storage: Record<string, unknown> } }).navigator;
       nav.storage.getDirectory = () => Promise.reject(new Error('disk full'));

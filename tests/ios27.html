@@ -1,0 +1,7 @@
+<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>iOS 27 ローカル検証</title>
+<style>body{font:16px system-ui;max-width:900px;margin:24px auto;padding:16px}button,input{margin:8px;padding:10px}video{width:45%;max-height:350px}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style>
+<h1>iOS 27 ローカル検証</h1><p>開発サーバー専用。動画・結果はアップロードしません。比較は同じ素材で行ってください。</p>
+<input id="file" type="file" accept="video/*"><br>
+<button id="inspect">色・順序・圧縮を検証</button><button id="bench">取り込み比較（各5回）</button><button id="cancel">中止</button><button id="recover">失敗した取り込みを削除再試行</button>
+<p id="status"></p><video id="original" controls playsinline></video><video id="compressed" controls playsinline></video><pre id="report"></pre>
+<script type="module" src="/src/dev/ios27-validation.ts"></script></html>

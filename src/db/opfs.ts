@@ -33,6 +33,18 @@ function splitPath(path: string): [string, string] {
  * 元の拡張子を保持する (.mov / .mp4 / .heic など)。
  */
 export async function writeInputToOpfs(file: File, id: string): Promise<string> {
+  // Experimental until iOS device measurements satisfy the adoption criteria.
+  if (import.meta.env.DEV) {
+    let streamEnabled = false;
+    try { streamEnabled = globalThis.localStorage?.getItem('experimental-stream-ingest') === '1'; }
+    catch { /* Disabled when storage preferences cannot be read. */ }
+    // Keep the import itself inside the compile-time guard. Otherwise Vite can
+    // emit an unused ingestion Worker and include it in the production precache.
+    if (streamEnabled) {
+      const { supportsStreamTransfer, ingestStream } = await import('../workers/ingest-client');
+      if (await supportsStreamTransfer()) return ingestStream(file, id);
+    }
+  }
   const ext = extractExtension(file.name);
   const fileName = `${id}.${ext}`;
   const dir = await getSubDir(INPUTS_DIR);

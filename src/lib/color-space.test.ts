@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isBt2020Primaries } from './color-space';
+import { isBt2020Primaries, isHdrTransfer, needsSdrConversion } from './color-space';
 
 // lib.dom.d.ts に 'bt2020' / 'hlg' / 'pq' は無いので unknown 経由でキャストして渡す。
 function bt2020(extra?: Record<string, unknown>): VideoColorSpaceInit {
@@ -37,5 +37,22 @@ describe('isBt2020Primaries', () => {
 
   it('primaries=null (明示的に null) は false', () => {
     expect(isBt2020Primaries({ primaries: null })).toBe(false);
+  });
+});
+
+describe('transfer versus gamut', () => {
+  it('BT.2020 SDR needs gamut conversion but is not HDR', () => {
+    const color = bt2020({ transfer: 'bt709' });
+    expect(isHdrTransfer(color)).toBe(false);
+    expect(needsSdrConversion(color)).toBe(true);
+  });
+  it.each(['pq', 'hlg'])('detects %s without primaries', (transfer) => {
+    const color = { transfer } as unknown as VideoColorSpaceInit;
+    expect(isHdrTransfer(color)).toBe(true);
+    expect(needsSdrConversion(color)).toBe(true);
+  });
+  it('unknown is not assumed HDR', () => {
+    expect(isHdrTransfer({})).toBe(false);
+    expect(needsSdrConversion({})).toBe(false);
   });
 });
