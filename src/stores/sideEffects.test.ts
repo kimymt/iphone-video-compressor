@@ -4,6 +4,7 @@
 
 import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Mock } from 'vitest';
 import { indexedDB } from 'fake-indexeddb';
 import { installSideEffects } from './sideEffects';
 import { useQueueStore, _resetQueueStoreForTest } from './queueStore';
@@ -38,9 +39,9 @@ async function resetAll(): Promise<void> {
 }
 
 describe('installSideEffects', () => {
-  let acquireSpy: ReturnType<typeof vi.fn>;
-  let releaseSpy: ReturnType<typeof vi.fn>;
-  let soundSpy: ReturnType<typeof vi.fn>;
+  let acquireSpy: Mock<() => Promise<void>>;
+  let releaseSpy: Mock<() => Promise<void>>;
+  let soundSpy: Mock<() => Promise<void>>;
   let unsubscribe: (() => void) | null = null;
 
   beforeEach(async () => {

@@ -16,7 +16,9 @@ const mocks = vi.hoisted(() => {
     finalize: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
   };
-  const OutputCtor = vi.fn(() => output);
+  const OutputCtor = vi.fn(function () {
+    return output;
+  });
   const Mp4OutputFormatCtor = vi.fn(function (this: { __kind: string; opts: unknown }, opts: unknown) {
     this.__kind = 'Mp4OutputFormat';
     this.opts = opts;
