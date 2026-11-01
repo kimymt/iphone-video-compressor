@@ -22,8 +22,10 @@ const mocks = vi.hoisted(() => {
     computeDuration: vi.fn(),
     dispose: vi.fn(),
   };
-  const InputCtor = vi.fn(() => input);
-  const BlobSourceCtor = vi.fn();
+  const InputCtor = vi.fn(function () {
+    return input;
+  });
+  const BlobSourceCtor = vi.fn(function () {});
   return { videoTrack, audioTrack, input, InputCtor, BlobSourceCtor };
 });
 
